@@ -178,7 +178,8 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
                         st.selected = Some(item.id);
                     }
                     if let Some(err) = engine.source_error(item.id) {
-                        ui.colored_label(Color32::LIGHT_RED, "⚠").on_hover_text(err);
+                        ui.colored_label(Color32::LIGHT_RED, "(!)")
+                            .on_hover_text(err);
                     }
                 });
             }
@@ -299,10 +300,10 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
                 project.remove_item(scene_id, sel);
                 st.selected = None;
             }
-            if ui.button("▲").on_hover_text("Move up").clicked() {
+            if ui.button("Up").on_hover_text("Move up").clicked() {
                 project.active_mut().raise(sel);
             }
-            if ui.button("▼").on_hover_text("Move down").clicked() {
+            if ui.button("Down").on_hover_text("Move down").clicked() {
                 project.active_mut().lower(sel);
             }
             let (cw, ch) = project.canvas_size();
@@ -365,7 +366,7 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
                     [*width, *height] = *edit_size;
                 }
                 if ui
-                    .button("⟳ Refresh")
+                    .button("Refresh")
                     .on_hover_text("Reload the page, e.g. after changing the widget in Streamlabs")
                     .clicked()
                 {
@@ -426,7 +427,7 @@ fn mixer(ui: &mut Ui, project: &mut Project, engine: &Engine) {
                 ui.horizontal(|ui| {
                     ui.label(&a.name);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("✕").on_hover_text("Remove").clicked() {
+                        if ui.small_button("x").on_hover_text("Remove").clicked() {
                             remove = Some(a.id);
                         }
                         let label = if a.muted { "Muted" } else { "Mute" };
