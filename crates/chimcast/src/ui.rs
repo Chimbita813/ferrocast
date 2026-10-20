@@ -682,15 +682,22 @@ fn token_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project) {
     }
 }
 
+/// A Twitch login from whatever was typed: "Chimbita Music", "@x",
+/// "https://www.twitch.tv/x" all work. Logins are lowercase letters, digits, _.
+fn channel_name(input: &str) -> String {
+    let s = input.trim();
+    let s = s.rsplit_once("twitch.tv/").map_or(s, |(_, rest)| rest);
+    let s = s.split(['/', '?']).next().unwrap_or_default();
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
 /// Live Twitch chat next to the preview, like Streamlabs Desktop.
 fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
     use chimcast_media::chat::{ChatState, TwitchChat};
-    let channel = project
-        .settings
-        .stream
-        .twitch_channel
-        .trim()
-        .to_ascii_lowercase();
+    let channel = channel_name(&project.settings.stream.twitch_channel);
     // (Re)connect when the channel changes; disconnect when it's cleared.
     if st.chat.as_ref().map(|c| c.channel()) != Some(channel.as_str()) {
         st.chat = (!channel.is_empty()).then(|| TwitchChat::connect(&channel));
@@ -699,9 +706,6 @@ fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
 
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Chat").strong());
-        if !channel.is_empty() {
-            ui.weak(format!("#{channel}"));
-        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.small_button("Hide").clicked() {
                 st.hide_chat = true;
@@ -723,6 +727,9 @@ fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
             }
         });
     });
+    if !channel.is_empty() {
+        ui.weak(format!("twitch.tv/{channel}"));
+    }
     ui.separator();
 
     let Some(chat) = &st.chat else {
@@ -733,21 +740,21 @@ fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
                 .desired_width(f32::INFINITY),
         );
         let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let name = st
-            .chat_channel
-            .trim()
-            .trim_start_matches("https://www.twitch.tv/")
-            .trim_start_matches("twitch.tv/")
-            .trim_matches(['#', '/', '@'])
-            .to_string();
+        let name = channel_name(&st.chat_channel);
         if (ui.button("Show chat").clicked() || enter) && !name.is_empty() {
             project.settings.stream.twitch_channel = name;
+        }
+        let preview = channel_name(&st.chat_channel);
+        if !preview.is_empty() {
+            ui.weak(format!("Will show chat from twitch.tv/{preview}"));
         }
         ui.weak("Read-only: to type, use Pop out.");
         return;
     };
 
-    match chat.state() {
+    let state = chat.state();
+    let joined = state == ChatState::Joined;
+    match state {
         ChatState::Connecting => {
             ui.weak("Connecting to chat...");
         }
@@ -768,8 +775,8 @@ fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
         .stick_to_bottom(true)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            if messages.is_empty() {
-                ui.weak("No messages yet.");
+            if messages.is_empty() && joined {
+                ui.weak("Connected. New messages appear here as people type.");
             }
             for m in &messages {
                 let name_color = m
