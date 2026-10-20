@@ -303,6 +303,7 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
             }
         });
     });
+    let canvas = project.canvas_size();
     if let Some(item) = st.selected.and_then(|id| project.active_mut().item_mut(id)) {
         ui.horizontal(|ui| {
             ui.label("Name");
@@ -345,6 +346,7 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
                 {
                     *url = edit_url.trim().to_string();
                     [*width, *height] = *edit_size;
+                    item.rect = page_rect(*width, *height, canvas);
                 }
                 if ui
                     .button("Refresh")
@@ -411,7 +413,9 @@ fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dial
             }
             AddDialog::Browser => {
                 if st.browser_size == [0, 0] {
-                    st.browser_size = [800, 600];
+                    // Overlays are usually designed for the full canvas.
+                    let s = &project.settings.video;
+                    st.browser_size = [s.width, s.height];
                 }
                 ui.label("Widget URL (from the Streamlabs dashboard) or path to an HTML file:");
                 let field = ui
@@ -451,6 +455,13 @@ fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dial
     if !open || done {
         st.add_dialog = None;
     }
+}
+
+/// Where a page of this size goes: covering the canvas if it matches it,
+/// otherwise centered at 1:1.
+fn page_rect(width: u32, height: u32, (cw, ch): (f32, f32)) -> Rect {
+    let (w, h) = (width as f32, height as f32);
+    Rect::new((cw - w) / 2.0, (ch - h) / 2.0, w, h)
 }
 
 fn page_size(ui: &mut Ui, size: &mut [u32; 2]) {

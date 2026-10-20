@@ -364,6 +364,13 @@ impl Browser {
         let controller: ICoreWebView2Controller = composition.cast()?;
         unsafe {
             composition.SetRootVisualTarget(&visual.cast::<windows::core::IUnknown>()?)?;
+            // One CSS pixel = one canvas pixel, whatever the Windows display scaling
+            // is (otherwise a 150% desktop renders overlays zoomed and shifted).
+            if let Ok(c3) = controller.cast::<ICoreWebView2Controller3>() {
+                let _ = c3.SetShouldDetectMonitorScaleChanges(false);
+                let _ = c3.SetBoundsMode(COREWEBVIEW2_BOUNDS_MODE_USE_RAW_PIXELS);
+                let _ = c3.SetRasterizationScale(1.0);
+            }
             controller.SetBounds(RECT {
                 left: 0,
                 top: 0,
