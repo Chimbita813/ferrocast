@@ -73,6 +73,13 @@ pub enum VideoSourceKind {
     Image { path: PathBuf },
     /// A solid color, straight (non-premultiplied) RGBA.
     Color { rgba: [u8; 4] },
+    /// A web page (e.g. a Streamlabs alert widget) rendered with a transparent
+    /// background at `width` x `height`. `url` may also be a local file path.
+    Browser {
+        url: String,
+        width: u32,
+        height: u32,
+    },
 }
 
 impl VideoSourceKind {
@@ -83,6 +90,7 @@ impl VideoSourceKind {
             VideoSourceKind::Webcam { .. } => "Webcam",
             VideoSourceKind::Image { .. } => "Image",
             VideoSourceKind::Color { .. } => "Color",
+            VideoSourceKind::Browser { .. } => "Browser",
         }
     }
 }
@@ -337,6 +345,11 @@ impl Project {
             VideoSourceKind::Monitor { .. }
             | VideoSourceKind::Window { .. }
             | VideoSourceKind::Color { .. } => Rect::new(0.0, 0.0, cw, ch),
+            // Pages keep their own pixel size, centered (widgets are mostly transparent).
+            VideoSourceKind::Browser { width, height, .. } => {
+                let (w, h) = (width as f32, height as f32);
+                Rect::new((cw - w) / 2.0, (ch - h) / 2.0, w, h)
+            }
             // Webcams and images start in the bottom-right quarter.
             VideoSourceKind::Webcam { .. } | VideoSourceKind::Image { .. } => {
                 Rect::new(cw * 0.7, ch * 0.7, cw * 0.28, ch * 0.28)

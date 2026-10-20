@@ -8,6 +8,7 @@
 #![cfg(windows)]
 
 pub mod aac_encoder;
+pub mod browser;
 pub mod capture;
 pub mod compositor;
 pub mod d3d;

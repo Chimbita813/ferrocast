@@ -24,6 +24,7 @@ use chimcast_media::{AudioInfo, Packet, StreamInfo, VideoInfo};
 use windows::Win32::Graphics::Direct3D11::ID3D11ShaderResourceView;
 
 use crate::aac_encoder::AacEncoder;
+use crate::browser::BrowserSource;
 use crate::capture::{Frame, FrameSlot, ScreenCapture};
 use crate::compositor::{Compositor, DrawItem, Fill};
 use crate::d3d::Device;
@@ -37,6 +38,7 @@ enum Source {
     Webcam(webcam::Webcam),
     Image(Frame),
     Color([f32; 4]),
+    Browser(BrowserSource),
     /// Couldn't be opened (window not found, camera busy); retried later.
     Missing {
         since: Instant,
@@ -71,6 +73,9 @@ impl Source {
             }
             VideoSourceKind::Image { path } => image::load(device, path).map(Source::Image),
             VideoSourceKind::Color { rgba } => Ok(Source::Color(rgba.map(|c| c as f32 / 255.0))),
+            VideoSourceKind::Browser { url, width, height } => {
+                BrowserSource::open(device, url, *width, *height).map(Source::Browser)
+            }
         };
         result.unwrap_or_else(|e| {
             log::warn!("{} source unavailable: {e}", kind.label());
@@ -94,6 +99,13 @@ impl Source {
             Source::Image(f) => Some((Fill::Texture(f.srv.clone()), (f.width, f.height))),
             Source::Color(c) => Some((Fill::Solid(*c), (0, 0))),
             Source::Missing { .. } => None,
+            // Pages have real transparency (premultiplied, like images).
+            Source::Browser(b) => {
+                let slot = b.frames();
+                let guard = slot.lock().unwrap();
+                let f = guard.as_ref()?;
+                Some((Fill::Texture(f.srv.clone()), (f.width, f.height)))
+            }
             _ => {
                 let slot = self.slot()?;
                 let guard = slot.lock().unwrap();
@@ -260,7 +272,25 @@ impl Engine {
     pub fn source_error(&self, item: Id) -> Option<String> {
         match &self.shared.video.lock().unwrap().get(&item)?.source {
             Source::Missing { error, .. } => Some(error.clone()),
+            Source::Browser(b) => b.error(),
             _ => None,
+        }
+    }
+
+    /// Reloads a browser source's page; one that failed to open is created again.
+    pub fn reload_source(&self, item: Id) {
+        let mut video = self.shared.video.lock().unwrap();
+        let failed = match video.get(&item).map(|s| &s.source) {
+            Some(Source::Browser(b)) if b.error().is_none() => {
+                b.reload();
+                false
+            }
+            Some(Source::Browser(_)) => true,
+            _ => false,
+        };
+        if failed {
+            // The next sync opens it again.
+            video.remove(&item);
         }
     }
 

@@ -70,16 +70,17 @@ impl ScreenCapture {
     pub fn monitor(device: &Device, monitor: HMONITOR) -> Result<Self> {
         let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
         let item: GraphicsCaptureItem = unsafe { interop.CreateForMonitor(monitor)? };
-        Self::start(device, item)
+        Self::from_item(device, item)
     }
 
     pub fn window(device: &Device, window: HWND) -> Result<Self> {
         let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
         let item: GraphicsCaptureItem = unsafe { interop.CreateForWindow(window)? };
-        Self::start(device, item)
+        Self::from_item(device, item)
     }
 
-    fn start(device: &Device, item: GraphicsCaptureItem) -> Result<Self> {
+    /// Captures any capture item: a monitor, a window, or a composition visual.
+    pub fn from_item(device: &Device, item: GraphicsCaptureItem) -> Result<Self> {
         let format = DirectXPixelFormat::B8G8R8A8UIntNormalized;
         let size = item.Size()?;
         // Two buffers: one being written by DWM, one being copied by us.

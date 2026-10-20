@@ -24,6 +24,10 @@ pub struct UiState {
     show_settings: bool,
     show_key: bool,
     image_path: String,
+    browser_url: String,
+    browser_size: [u32; 2],
+    /// Edit buffer for the selected browser source: (item, url, size).
+    browser_edit: Option<(Id, String, [u32; 2])>,
     message: Option<(String, Instant)>,
     recording_started: Option<Instant>,
     streaming_started: Option<Instant>,
@@ -252,6 +256,30 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
                     ui.close();
                 }
             });
+            ui.menu_button("Browser", |ui| {
+                if st.browser_size == [0, 0] {
+                    st.browser_size = [800, 600];
+                }
+                ui.label("Widget URL or path to an HTML file:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut st.browser_url)
+                        .hint_text("https://streamlabs.com/alert-box/v3/...")
+                        .desired_width(360.0),
+                );
+                page_size(ui, &mut st.browser_size);
+                if ui.button("Add").clicked() && !st.browser_url.trim().is_empty() {
+                    let url = st.browser_url.trim().to_string();
+                    let [width, height] = st.browser_size;
+                    add_source(
+                        project,
+                        st,
+                        browser_name(&url),
+                        VideoSourceKind::Browser { url, width, height },
+                    );
+                    st.browser_url.clear();
+                    ui.close();
+                }
+            });
             if ui.button("Color").clicked() {
                 add_source(
                     project,
@@ -312,6 +340,73 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
         if let VideoSourceKind::Color { rgba } = &mut item.source {
             ui.color_edit_button_srgba_unmultiplied(rgba);
         }
+        if let VideoSourceKind::Browser { url, width, height } = &mut item.source {
+            // Edits go to a buffer: changing the source re-creates the page.
+            if st
+                .browser_edit
+                .as_ref()
+                .is_none_or(|(id, ..)| *id != item.id)
+            {
+                st.browser_edit = Some((item.id, url.clone(), [*width, *height]));
+            }
+            let (_, edit_url, edit_size) = st.browser_edit.as_mut().unwrap();
+            ui.horizontal(|ui| {
+                ui.label("URL");
+                ui.add(egui::TextEdit::singleline(edit_url).desired_width(f32::INFINITY));
+            });
+            ui.horizontal(|ui| {
+                page_size(ui, edit_size);
+                let changed = *edit_url.trim() != *url || *edit_size != [*width, *height];
+                if ui
+                    .add_enabled(changed, egui::Button::new("Apply"))
+                    .clicked()
+                {
+                    *url = edit_url.trim().to_string();
+                    [*width, *height] = *edit_size;
+                }
+                if ui
+                    .button("⟳ Refresh")
+                    .on_hover_text("Reload the page, e.g. after changing the widget in Streamlabs")
+                    .clicked()
+                {
+                    engine.reload_source(item.id);
+                }
+            });
+            if let Some(err) = engine.source_error(item.id) {
+                ui.colored_label(Color32::LIGHT_RED, err);
+            }
+        }
+    }
+}
+
+fn page_size(ui: &mut Ui, size: &mut [u32; 2]) {
+    ui.label("Page size");
+    ui.add(
+        egui::DragValue::new(&mut size[0])
+            .range(16..=7680)
+            .suffix(" w"),
+    );
+    ui.add(
+        egui::DragValue::new(&mut size[1])
+            .range(16..=4320)
+            .suffix(" h"),
+    );
+}
+
+/// "streamlabs.com/alert-box/..." -> "Alert Box"-ish short names for the list.
+fn browser_name(url: &str) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let mut parts = path.trim_end_matches('/').rsplit(['/', '\\']);
+    let last = parts.next().unwrap_or_default();
+    let name = if url.contains("streamlabs.com") {
+        path.split('/').find(|p| p.contains('-')).unwrap_or(last)
+    } else {
+        last
+    };
+    if name.is_empty() || name.contains(':') {
+        "Browser".into()
+    } else {
+        name.to_string()
     }
 }
 

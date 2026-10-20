@@ -15,12 +15,16 @@ thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.62"
+windows-numerics = "0.3"
+webview2-com = "0.39"
 windows = { version = "0.62", features = [
     "Foundation",
     "Graphics",
     "Graphics_Capture",
     "Graphics_DirectX",
     "Graphics_DirectX_Direct3D11",
+    "System",
+    "UI_Composition",
     "Win32_Devices_FunctionDiscovery",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
@@ -40,6 +44,7 @@ windows = { version = "0.62", features = [
     "Win32_Security",
     "Win32_Security_Cryptography",
     "Win32_System_Com",
+    "Win32_System_LibraryLoader",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Ole",
     "Win32_System_Performance",

@@ -77,6 +77,15 @@ cargo test -p chimcast-core -p chimcast-media
 - Recording to MKV/fragmented MP4 so a crash doesn't lose the file.
 - A file picker for image sources (currently a path text box).
 
+## Browser sources (Streamlabs widgets)
+
+Sources → + → Browser, then paste the widget URL from the Streamlabs dashboard
+(alert box, chat box, goals...) or a path to a local `.html` file. Pages render
+with a transparent background through WebView2 (part of Windows 10/11) and are
+captured on the GPU. Select the source and press Refresh to reload it after
+changing the widget in Streamlabs. Widget sounds play on your speakers, so the
+Desktop Audio source picks them up.
+
 ## Updates
 
 Every green build of `main` is published as a GitHub release (`build-<n>`) with
