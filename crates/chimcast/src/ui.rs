@@ -62,6 +62,10 @@ fn widget_page(url: &str) -> Option<&'static str> {
 pub struct UiState {
     add_dialog: Option<AddDialog>,
     show_connect: bool,
+    hide_chat: bool,
+    chat: Option<chimcast_media::chat::TwitchChat>,
+    chat_channel: String,
+    chat_seen: u64,
     show_tests: bool,
     show_token: bool,
     /// Result of the last test alert, filled in by its background thread.
@@ -113,6 +117,21 @@ pub fn draw(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
                 controls(&mut cols[3], st, project, engine);
             });
         });
+    if st.hide_chat {
+        egui::Panel::right("chat-closed")
+            .resizable(false)
+            .show(ui, |ui| {
+                if ui.small_button("Chat").on_hover_text("Show chat").clicked() {
+                    st.hide_chat = false;
+                }
+            });
+    } else {
+        egui::Panel::right("chat")
+            .resizable(true)
+            .default_size(300.0)
+            .min_size(200.0)
+            .show(ui, |ui| chat_panel(ui, st, project));
+    }
     egui::CentralPanel::default_margins().show(ui, |ui| preview(ui, st, project));
 
     if st.show_token {
@@ -661,6 +680,127 @@ fn token_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project) {
     if done || !open {
         st.show_token = false;
     }
+}
+
+/// Live Twitch chat next to the preview, like Streamlabs Desktop.
+fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
+    use chimcast_media::chat::{ChatState, TwitchChat};
+    let channel = project
+        .settings
+        .stream
+        .twitch_channel
+        .trim()
+        .to_ascii_lowercase();
+    // (Re)connect when the channel changes; disconnect when it's cleared.
+    if st.chat.as_ref().map(|c| c.channel()) != Some(channel.as_str()) {
+        st.chat = (!channel.is_empty()).then(|| TwitchChat::connect(&channel));
+        st.chat_seen = 0;
+    }
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Chat").strong());
+        if !channel.is_empty() {
+            ui.weak(format!("#{channel}"));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("Hide").clicked() {
+                st.hide_chat = true;
+            }
+            if !channel.is_empty() {
+                if ui
+                    .small_button("Pop out")
+                    .on_hover_text("Open Twitch chat in your browser to type")
+                    .clicked()
+                {
+                    crate::dialog::open_url(&format!(
+                        "https://www.twitch.tv/popout/{channel}/chat"
+                    ));
+                }
+                if ui.small_button("Change").clicked() {
+                    st.chat_channel = channel.clone();
+                    project.settings.stream.twitch_channel.clear();
+                }
+            }
+        });
+    });
+    ui.separator();
+
+    let Some(chat) = &st.chat else {
+        ui.label("Your Twitch channel name:");
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut st.chat_channel)
+                .hint_text("chimbita813")
+                .desired_width(f32::INFINITY),
+        );
+        let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let name = st
+            .chat_channel
+            .trim()
+            .trim_start_matches("https://www.twitch.tv/")
+            .trim_start_matches("twitch.tv/")
+            .trim_matches(['#', '/', '@'])
+            .to_string();
+        if (ui.button("Show chat").clicked() || enter) && !name.is_empty() {
+            project.settings.stream.twitch_channel = name;
+        }
+        ui.weak("Read-only: to type, use Pop out.");
+        return;
+    };
+
+    match chat.state() {
+        ChatState::Connecting => {
+            ui.weak("Connecting to chat...");
+        }
+        ChatState::Disconnected(e) => {
+            ui.colored_label(
+                Color32::LIGHT_RED,
+                format!("Chat disconnected ({e}), retrying..."),
+            );
+        }
+        ChatState::Joined => {}
+    }
+    let messages = chat.messages();
+    let count = chat.count();
+    let new = count != st.chat_seen;
+    st.chat_seen = count;
+    egui::ScrollArea::vertical()
+        .id_salt("chat-messages")
+        .stick_to_bottom(true)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            if messages.is_empty() {
+                ui.weak("No messages yet.");
+            }
+            for m in &messages {
+                let name_color = m
+                    .color
+                    .map(|[r, g, b]| Color32::from_rgb(r, g, b))
+                    .unwrap_or(Color32::from_rgb(180, 140, 255));
+                let mut job = egui::text::LayoutJob::default();
+                let font = egui::TextStyle::Body.resolve(ui.style());
+                let text_color = if m.action {
+                    name_color
+                } else {
+                    ui.visuals().text_color()
+                };
+                job.append(
+                    &m.name,
+                    0.0,
+                    egui::TextFormat::simple(font.clone(), name_color),
+                );
+                job.append(
+                    if m.action { " " } else { ": " },
+                    0.0,
+                    egui::TextFormat::simple(font.clone(), text_color),
+                );
+                job.append(&m.text, 0.0, egui::TextFormat::simple(font, text_color));
+                job.wrap.max_width = ui.available_width();
+                ui.label(job);
+            }
+            if new {
+                ui.ctx().request_repaint();
+            }
+        });
 }
 
 fn go_live(st: &mut UiState, project: &Project, engine: &mut Engine) {

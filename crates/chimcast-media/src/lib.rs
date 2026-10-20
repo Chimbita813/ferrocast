@@ -8,6 +8,7 @@
 pub mod aac;
 pub mod amf0;
 pub mod audio;
+pub mod chat;
 pub mod flv;
 pub mod h264;
 pub mod mp4;

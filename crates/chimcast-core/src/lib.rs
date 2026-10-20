@@ -200,6 +200,9 @@ pub struct StreamSettings {
     /// Streamlabs API access token, for the test alert buttons.
     #[serde(default)]
     pub streamlabs_token: String,
+    /// Twitch channel whose chat is shown next to the preview.
+    #[serde(default)]
+    pub twitch_channel: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -237,6 +240,7 @@ impl Default for Settings {
                 server: STREAM_PRESETS[0].1.to_string(),
                 key: String::new(),
                 streamlabs_token: String::new(),
+                twitch_channel: String::new(),
             },
             auto_update: true,
         }
