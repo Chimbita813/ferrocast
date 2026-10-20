@@ -30,6 +30,37 @@ impl Drop for Handle {
 /// Fetches an `https://` URL, following redirects, and returns the body.
 /// Fails on any status other than 200. `limit` caps the body size.
 pub fn get(url: &str, user_agent: &str, accept: &str, limit: usize) -> Result<Vec<u8>> {
+    request(
+        "GET",
+        url,
+        user_agent,
+        &format!("Accept: {accept}\r\n"),
+        &[],
+        limit,
+    )
+}
+
+/// POSTs a form (`a=1&b=2`) with extra header lines (each ending in CRLF).
+pub fn post_form(url: &str, user_agent: &str, headers: &str, form: &str) -> Result<Vec<u8>> {
+    let headers = format!("{headers}Content-Type: application/x-www-form-urlencoded\r\n");
+    request(
+        "POST",
+        url,
+        user_agent,
+        &headers,
+        form.as_bytes(),
+        1024 * 1024,
+    )
+}
+
+fn request(
+    method: &str,
+    url: &str,
+    user_agent: &str,
+    headers: &str,
+    body: &[u8],
+    limit: usize,
+) -> Result<Vec<u8>> {
     let rest = url
         .strip_prefix("https://")
         .ok_or_else(|| windows::core::Error::new(E_INVALIDARG, "only https URLs are supported"))?;
@@ -55,15 +86,20 @@ pub fn get(url: &str, user_agent: &str, accept: &str, limit: usize) -> Result<Ve
         ))?;
         let request = Handle::new(WinHttpOpenRequest(
             connect.0,
-            &HSTRING::from("GET"),
+            &HSTRING::from(method),
             &HSTRING::from(path),
             PCWSTR::null(),
             PCWSTR::null(),
             std::ptr::null(),
             WINHTTP_FLAG_SECURE,
         ))?;
-        let headers: Vec<u16> = format!("Accept: {accept}\r\n").encode_utf16().collect();
-        WinHttpSendRequest(request.0, Some(&headers), None, 0, 0, 0)?;
+        let headers: Vec<u16> = headers.encode_utf16().collect();
+        let (data, len) = if body.is_empty() {
+            (None, 0)
+        } else {
+            (Some(body.as_ptr().cast()), body.len() as u32)
+        };
+        WinHttpSendRequest(request.0, Some(&headers), data, len, len, 0)?;
         WinHttpReceiveResponse(request.0, std::ptr::null_mut())?;
 
         let mut status = 0u32;
@@ -76,7 +112,7 @@ pub fn get(url: &str, user_agent: &str, accept: &str, limit: usize) -> Result<Ve
             &mut len,
             std::ptr::null_mut(),
         )?;
-        if status != 200 {
+        if !(200..300).contains(&status) {
             return Err(windows::core::Error::new(
                 ERROR_INVALID_DATA.to_hresult(),
                 format!("HTTP {status} from {host}"),

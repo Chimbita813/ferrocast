@@ -197,6 +197,9 @@ pub struct StreamSettings {
     /// RTMP ingest URL, e.g. `rtmp://live.twitch.tv/app`.
     pub server: String,
     pub key: String,
+    /// Streamlabs API access token, for the test alert buttons.
+    #[serde(default)]
+    pub streamlabs_token: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -233,6 +236,7 @@ impl Default for Settings {
             stream: StreamSettings {
                 server: STREAM_PRESETS[0].1.to_string(),
                 key: String::new(),
+                streamlabs_token: String::new(),
             },
             auto_update: true,
         }

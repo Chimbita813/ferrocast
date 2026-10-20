@@ -19,6 +19,7 @@ pub mod http;
 pub mod image;
 pub mod mf;
 pub mod nv12;
+pub mod streamlabs;
 pub mod sysinfo;
 pub mod update;
 pub mod wasapi;

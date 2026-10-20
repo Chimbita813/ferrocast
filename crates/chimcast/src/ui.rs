@@ -27,6 +27,10 @@ enum AddDialog {
 pub struct UiState {
     add_dialog: Option<AddDialog>,
     show_connect: bool,
+    show_tests: bool,
+    show_token: bool,
+    /// Result of the last test alert, filled in by its background thread.
+    alert_result: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     stream_error: Option<String>,
     selected: Option<Id>,
     drag: Option<Drag>,
@@ -56,6 +60,11 @@ impl UiState {
 pub fn draw(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut Engine) -> bool {
     let before = project.clone();
 
+    let alert = st.alert_result.lock().unwrap().take();
+    if let Some(msg) = alert {
+        st.say(msg);
+    }
+    egui::Panel::top("test-widgets").show(ui, |ui| test_widgets(ui, st, project));
     egui::Panel::bottom("status").show(ui, |ui| status_bar(ui, st, engine));
     egui::Panel::bottom("dock")
         .resizable(true)
@@ -71,6 +80,9 @@ pub fn draw(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
         });
     egui::CentralPanel::default_margins().show(ui, |ui| preview(ui, st, project));
 
+    if st.show_token {
+        token_dialog(ui.ctx(), st, project);
+    }
     if st.show_connect {
         connect_dialog(ui.ctx(), st, project, engine);
     }
@@ -521,6 +533,82 @@ fn eye_icon(ui: &mut Ui, visible: bool) -> ERect {
         p.line_segment([c + Vec2::new(-7.0, 6.0), c + Vec2::new(7.0, -6.0)], stroke);
     }
     rect
+}
+
+/// The "Test Widgets" strip above the preview, like Streamlabs Desktop.
+fn test_widgets(ui: &mut Ui, st: &mut UiState, project: &Project) {
+    use chimcast_win::streamlabs::{send_test_alert, TEST_ALERTS};
+    ui.horizontal(|ui| {
+        ui.toggle_value(&mut st.show_tests, "Test Widgets");
+        if !st.show_tests {
+            return;
+        }
+        ui.separator();
+        for (label, kind) in TEST_ALERTS {
+            let pill = egui::Button::new(*label).corner_radius(CornerRadius::same(12));
+            if !ui.add(pill).clicked() {
+                continue;
+            }
+            let token = project.settings.stream.streamlabs_token.trim().to_string();
+            if token.is_empty() {
+                st.show_token = true;
+                continue;
+            }
+            st.say(format!("Sending a test {label} alert..."));
+            let result = st.alert_result.clone();
+            let (label, kind) = (*label, *kind);
+            std::thread::spawn(move || {
+                let msg = match send_test_alert(&token, kind) {
+                    Ok(()) => format!("Test {label} sent"),
+                    Err(e) => {
+                        log::warn!("test {kind} alert: {e}");
+                        format!("Test {label} failed: {e}")
+                    }
+                };
+                *result.lock().unwrap() = Some(msg);
+            });
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("Token...").clicked() {
+                st.show_token = true;
+            }
+        });
+    });
+}
+
+/// Asks for the Streamlabs API access token the test buttons need.
+fn token_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project) {
+    let mut open = true;
+    let mut done = false;
+    egui::Window::new("Connect Streamlabs")
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label("Test Widgets plays test alerts on your Streamlabs widgets.");
+            ui.label("1. Open Streamlabs API Settings, then the \"API Tokens\" tab:");
+            if ui.button("Open Streamlabs API Settings").clicked() {
+                crate::dialog::open_url(chimcast_win::streamlabs::TOKEN_PAGE);
+            }
+            ui.label("2. Copy \"Your API Access Token\" and paste it here:");
+            let token = &mut project.settings.stream.streamlabs_token;
+            ui.add(
+                egui::TextEdit::singleline(token)
+                    .password(true)
+                    .desired_width(360.0),
+            );
+            ui.weak("Keep it private: it gives access to your Streamlabs account.");
+            if ui
+                .add_enabled(!token.trim().is_empty(), egui::Button::new("Save"))
+                .clicked()
+            {
+                done = true;
+            }
+        });
+    if done || !open {
+        st.show_token = false;
+    }
 }
 
 fn go_live(st: &mut UiState, project: &Project, engine: &mut Engine) {
@@ -1073,6 +1161,15 @@ fn settings(ui: &mut Ui, st: &mut UiState, project: &mut Project, live: bool) {
                 );
                 ui.checkbox(&mut st.show_key, "show");
             });
+            ui.end_row();
+
+            ui.label("Streamlabs token");
+            ui.add(
+                egui::TextEdit::singleline(&mut s.stream.streamlabs_token)
+                    .password(true)
+                    .hint_text("for Test Widgets")
+                    .desired_width(260.0),
+            );
             ui.end_row();
 
             ui.label(egui::RichText::new("App").strong());
