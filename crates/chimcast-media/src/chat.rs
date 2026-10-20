@@ -1,8 +1,9 @@
-//! Read-only Twitch chat over IRC.
+//! Twitch chat over IRC.
 //!
 //! Twitch lets anyone read a channel's chat anonymously (nick `justinfanNNN`)
 //! over plain IRC, so the chat panel needs no login, no TLS library and no
-//! browser: one thread, one socket, a few kilobytes of messages.
+//! browser: one thread, one socket, a few kilobytes of messages. With a user
+//! token (`chat:read chat:edit`) the same connection can also send.
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -30,6 +31,15 @@ pub enum ChatState {
     Connecting,
     Joined,
     Disconnected(String),
+    /// Twitch refused the token (expired or revoked); reading stops until a new one.
+    AuthFailed,
+}
+
+/// Credentials for sending: the Twitch login and an OAuth access token.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChatAuth {
+    pub login: String,
+    pub token: String,
 }
 
 struct Shared {
@@ -38,29 +48,68 @@ struct Shared {
     stop: AtomicBool,
     /// Bumped on every new message so the UI can scroll.
     count: Mutex<u64>,
+    /// Write half of the current connection, for sending.
+    writer: Mutex<Option<TcpStream>>,
 }
 
 pub struct TwitchChat {
     channel: String,
+    auth: Option<ChatAuth>,
     shared: Arc<Shared>,
 }
 
 impl TwitchChat {
     /// Starts reading `channel` (with or without `#`, any case) in the background,
     /// reconnecting on its own if the connection drops.
-    pub fn connect(channel: &str) -> Self {
+    pub fn connect(channel: &str, auth: Option<ChatAuth>) -> Self {
         let channel = channel.trim().trim_start_matches('#').to_ascii_lowercase();
         let shared = Arc::new(Shared {
             messages: Mutex::new(VecDeque::new()),
             state: Mutex::new(ChatState::Connecting),
             stop: AtomicBool::new(false),
             count: Mutex::new(0),
+            writer: Mutex::new(None),
         });
-        let (ch, sh) = (channel.clone(), shared.clone());
+        let (ch, sh, au) = (channel.clone(), shared.clone(), auth.clone());
         let _ = std::thread::Builder::new()
             .name("twitch-chat".into())
-            .spawn(move || run(&ch, &sh));
-        Self { channel, shared }
+            .spawn(move || run(&ch, au.as_ref(), &sh));
+        Self {
+            channel,
+            auth,
+            shared,
+        }
+    }
+
+    pub fn auth(&self) -> Option<&ChatAuth> {
+        self.auth.as_ref()
+    }
+
+    /// Sends a message as the logged-in user. Twitch doesn't echo our own
+    /// messages back, so it is added to the list here.
+    pub fn send(&self, text: &str) -> Result<(), String> {
+        let text = text.trim().replace(['\r', '\n'], " ");
+        let Some(auth) = &self.auth else {
+            return Err("log in to Twitch to type".into());
+        };
+        if text.is_empty() {
+            return Ok(());
+        }
+        let mut writer = self.shared.writer.lock().unwrap();
+        let stream = writer.as_mut().ok_or("not connected to chat")?;
+        write!(stream, "PRIVMSG #{} :{text}\r\n", self.channel).map_err(|e| e.to_string())?;
+        drop(writer);
+        self.push(ChatMessage {
+            name: auth.login.clone(),
+            color: None,
+            text,
+            action: false,
+        });
+        Ok(())
+    }
+
+    fn push(&self, m: ChatMessage) {
+        push(&self.shared, m);
     }
 
     pub fn channel(&self) -> &str {
@@ -92,11 +141,25 @@ impl Drop for TwitchChat {
     }
 }
 
-fn run(channel: &str, shared: &Shared) {
+fn push(shared: &Shared, m: ChatMessage) {
+    let mut list = shared.messages.lock().unwrap();
+    if list.len() >= KEEP {
+        list.pop_front();
+    }
+    list.push_back(m);
+    *shared.count.lock().unwrap() += 1;
+}
+
+fn run(channel: &str, auth: Option<&ChatAuth>, shared: &Shared) {
     let mut backoff = 1;
     while !shared.stop.load(Ordering::Relaxed) {
         *shared.state.lock().unwrap() = ChatState::Connecting;
-        let err = match session(channel, shared) {
+        let result = session(channel, auth, shared);
+        *shared.writer.lock().unwrap() = None;
+        if *shared.state.lock().unwrap() == ChatState::AuthFailed {
+            return;
+        }
+        let err = match result {
             Ok(()) => "connection closed".to_string(),
             Err(e) => e.to_string(),
         };
@@ -119,15 +182,22 @@ fn run(channel: &str, shared: &Shared) {
     }
 }
 
-fn session(channel: &str, shared: &Shared) -> std::io::Result<()> {
+fn session(channel: &str, auth: Option<&ChatAuth>, shared: &Shared) -> std::io::Result<()> {
     let mut stream = TcpStream::connect(SERVER)?;
     // Wake up regularly to notice a stop request; Twitch pings every ~5 minutes.
     stream.set_read_timeout(Some(Duration::from_secs(1)))?;
-    let nick = format!("justinfan{}", 10_000 + std::process::id() % 80_000);
+    let (pass, nick) = match auth {
+        Some(a) => (format!("oauth:{}", a.token), a.login.to_ascii_lowercase()),
+        None => (
+            "SCHMOOPIIE".to_string(),
+            format!("justinfan{}", 10_000 + std::process::id() % 80_000),
+        ),
+    };
     write!(
         stream,
-        "CAP REQ :twitch.tv/tags\r\nPASS SCHMOOPIIE\r\nNICK {nick}\r\nJOIN #{channel}\r\n"
+        "CAP REQ :twitch.tv/tags\r\nPASS {pass}\r\nNICK {nick}\r\nJOIN #{channel}\r\n"
     )?;
+    *shared.writer.lock().unwrap() = Some(stream.try_clone()?);
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut line = String::new();
     let mut silent = 0u32;
@@ -155,17 +225,18 @@ fn session(channel: &str, shared: &Shared) -> std::io::Result<()> {
             Err(e) => return Err(e),
         }
         let msg = line.trim_end();
+        if msg.contains("NOTICE * :Login authentication failed")
+            || msg.contains("NOTICE * :Improperly formatted auth")
+        {
+            *shared.state.lock().unwrap() = ChatState::AuthFailed;
+            return Ok(());
+        }
         if let Some(rest) = msg.strip_prefix("PING") {
             write!(stream, "PONG{rest}\r\n")?;
         } else if msg.contains(" JOIN #") || msg.contains(" 366 ") {
             *shared.state.lock().unwrap() = ChatState::Joined;
         } else if let Some(m) = parse_privmsg(msg) {
-            let mut list = shared.messages.lock().unwrap();
-            if list.len() >= KEEP {
-                list.pop_front();
-            }
-            list.push_back(m);
-            *shared.count.lock().unwrap() += 1;
+            push(shared, m);
         }
     }
 }

@@ -21,6 +21,7 @@ pub mod mf;
 pub mod nv12;
 pub mod streamlabs;
 pub mod sysinfo;
+pub mod twitch_auth;
 pub mod update;
 pub mod wasapi;
 pub mod webcam;

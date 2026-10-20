@@ -203,6 +203,16 @@ pub struct StreamSettings {
     /// Twitch channel whose chat is shown next to the preview.
     #[serde(default)]
     pub twitch_channel: String,
+    /// Client ID of the user's own Twitch app (Public), for logging in to chat.
+    #[serde(default)]
+    pub twitch_client_id: String,
+    /// Logged-in Twitch account for sending chat messages.
+    #[serde(default)]
+    pub twitch_login: String,
+    #[serde(default)]
+    pub twitch_token: String,
+    #[serde(default)]
+    pub twitch_refresh: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -241,6 +251,10 @@ impl Default for Settings {
                 key: String::new(),
                 streamlabs_token: String::new(),
                 twitch_channel: String::new(),
+                twitch_client_id: String::new(),
+                twitch_login: String::new(),
+                twitch_token: String::new(),
+                twitch_refresh: String::new(),
             },
             auto_update: true,
         }

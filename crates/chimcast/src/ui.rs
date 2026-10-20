@@ -59,6 +59,21 @@ fn widget_page(url: &str) -> Option<&'static str> {
 }
 
 #[derive(Default)]
+enum Login {
+    #[default]
+    Idle,
+    /// Asking Twitch for a code.
+    Starting,
+    /// Waiting for the user to approve `code` on twitch.tv.
+    Waiting {
+        code: String,
+        url: String,
+    },
+    Done(chimcast_win::twitch_auth::Tokens),
+    Failed(String),
+}
+
+#[derive(Default)]
 pub struct UiState {
     add_dialog: Option<AddDialog>,
     show_connect: bool,
@@ -66,6 +81,10 @@ pub struct UiState {
     chat: Option<chimcast_media::chat::TwitchChat>,
     chat_channel: String,
     chat_seen: u64,
+    chat_input: String,
+    chat_error: Option<String>,
+    /// Twitch login in progress, driven by a background thread.
+    login: std::sync::Arc<std::sync::Mutex<Login>>,
     show_tests: bool,
     show_token: bool,
     /// Result of the last test alert, filled in by its background thread.
@@ -696,12 +715,37 @@ fn channel_name(input: &str) -> String {
 
 /// Live Twitch chat next to the preview, like Streamlabs Desktop.
 fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
-    use chimcast_media::chat::{ChatState, TwitchChat};
+    use chimcast_media::chat::{ChatAuth, ChatState, TwitchChat};
+    poll_login(st, project);
     let channel = channel_name(&project.settings.stream.twitch_channel);
-    // (Re)connect when the channel changes; disconnect when it's cleared.
-    if st.chat.as_ref().map(|c| c.channel()) != Some(channel.as_str()) {
-        st.chat = (!channel.is_empty()).then(|| TwitchChat::connect(&channel));
+    let s = &project.settings.stream;
+    let auth = (!s.twitch_token.is_empty() && !s.twitch_login.is_empty()).then(|| ChatAuth {
+        login: s.twitch_login.clone(),
+        token: s.twitch_token.clone(),
+    });
+    // (Re)connect when the channel or the login changes; disconnect when cleared.
+    let current = st.chat.as_ref().map(|c| (c.channel(), c.auth()));
+    if current != Some((channel.as_str(), auth.as_ref())) {
+        st.chat = (!channel.is_empty()).then(|| TwitchChat::connect(&channel, auth.clone()));
         st.chat_seen = 0;
+    }
+    // The token expired (they last a few hours): renew it in the background.
+    if st
+        .chat
+        .as_ref()
+        .is_some_and(|c| c.state() == ChatState::AuthFailed)
+        && matches!(*st.login.lock().unwrap(), Login::Idle)
+    {
+        let (id, refresh) = (s.twitch_client_id.clone(), s.twitch_refresh.clone());
+        let login = st.login.clone();
+        *login.lock().unwrap() = Login::Starting;
+        std::thread::spawn(move || {
+            let next = match chimcast_win::twitch_auth::refresh(&id, &refresh) {
+                Ok(t) => Login::Done(t),
+                Err(e) => Login::Failed(e),
+            };
+            *login.lock().unwrap() = next;
+        });
     }
 
     ui.horizontal(|ui| {
@@ -748,7 +792,6 @@ fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
         if !preview.is_empty() {
             ui.weak(format!("Will show chat from twitch.tv/{preview}"));
         }
-        ui.weak("Read-only: to type, use Pop out.");
         return;
     };
 
@@ -765,11 +808,57 @@ fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
             );
         }
         ChatState::Joined => {}
+        ChatState::AuthFailed => {
+            ui.weak("Renewing your Twitch login...");
+        }
     }
-    let messages = chat.messages();
     let count = chat.count();
     let new = count != st.chat_seen;
     st.chat_seen = count;
+    // Message box at the bottom, messages fill the rest.
+    let logged_in = chat.auth().is_some();
+    let mut send = None;
+    egui::Panel::bottom("chat-input")
+        .show_separator_line(false)
+        .show(ui, |ui| {
+            ui.add_space(4.0);
+            if logged_in {
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut st.chat_input)
+                        .hint_text(format!(
+                            "Send a message as {}",
+                            project.settings.stream.twitch_login
+                        ))
+                        .desired_width(f32::INFINITY),
+                );
+                if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    send = Some(std::mem::take(&mut st.chat_input));
+                    field.request_focus();
+                }
+                ui.horizontal(|ui| {
+                    if let Some(e) = &st.chat_error {
+                        ui.colored_label(Color32::LIGHT_RED, e);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Log out").clicked() {
+                            let s = &mut project.settings.stream;
+                            s.twitch_login.clear();
+                            s.twitch_token.clear();
+                            s.twitch_refresh.clear();
+                        }
+                    });
+                });
+            } else {
+                login_ui(ui, st, project);
+            }
+        });
+    if let (Some(text), Some(chat)) = (send, &st.chat) {
+        st.chat_error = chat.send(&text).err();
+    }
+    let Some(chat) = &st.chat else {
+        return;
+    };
+    let messages = chat.messages();
     egui::ScrollArea::vertical()
         .id_salt("chat-messages")
         .stick_to_bottom(true)
@@ -808,6 +897,99 @@ fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
                 ui.ctx().request_repaint();
             }
         });
+}
+
+/// Picks up the result of a login or token refresh.
+fn poll_login(st: &mut UiState, project: &mut Project) {
+    let mut login = st.login.lock().unwrap();
+    match std::mem::take(&mut *login) {
+        Login::Done(t) => {
+            let s = &mut project.settings.stream;
+            s.twitch_login = t.login;
+            s.twitch_token = t.access;
+            s.twitch_refresh = t.refresh;
+        }
+        Login::Failed(e) => {
+            // A refresh that failed means logging in again.
+            let s = &mut project.settings.stream;
+            s.twitch_token.clear();
+            s.twitch_refresh.clear();
+            st.chat_error = Some(e);
+        }
+        other => *login = other,
+    }
+}
+
+/// "Log in to type": device code login, plus the one-time app setup.
+fn login_ui(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
+    use chimcast_win::twitch_auth;
+    let waiting = match &*st.login.lock().unwrap() {
+        Login::Waiting { code, url } => Some((code.clone(), url.clone())),
+        Login::Starting => Some((String::new(), String::new())),
+        _ => None,
+    };
+    if let Some((code, url)) = waiting {
+        if code.is_empty() {
+            ui.weak("Contacting Twitch...");
+        } else {
+            ui.label("Approve Chimcast on twitch.tv with this code:");
+            ui.label(egui::RichText::new(&code).heading().strong());
+            if ui.small_button("Open the Twitch page again").clicked() {
+                crate::dialog::open_url(&url);
+            }
+        }
+        return;
+    }
+    if let Some(e) = &st.chat_error {
+        ui.colored_label(Color32::LIGHT_RED, e);
+    }
+    let client_id = project.settings.stream.twitch_client_id.trim().to_string();
+    if client_id.is_empty() {
+        ui.weak("To type here, register Chimcast with Twitch once:");
+        if ui
+            .small_button("Open the Twitch developer console")
+            .clicked()
+        {
+            crate::dialog::open_url(twitch_auth::CONSOLE_PAGE);
+        }
+        ui.weak("Register Your Application > Client Type: Public, then paste its Client ID:");
+        ui.add(
+            egui::TextEdit::singleline(&mut project.settings.stream.twitch_client_id)
+                .hint_text("Client ID")
+                .desired_width(f32::INFINITY),
+        );
+        return;
+    }
+    ui.horizontal(|ui| {
+        if ui.button("Log in to type").clicked() {
+            st.chat_error = None;
+            let login = st.login.clone();
+            *login.lock().unwrap() = Login::Starting;
+            std::thread::spawn(move || {
+                let code = match twitch_auth::start(&client_id) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        *login.lock().unwrap() = Login::Failed(e);
+                        return;
+                    }
+                };
+                crate::dialog::open_url(&code.verification_uri);
+                *login.lock().unwrap() = Login::Waiting {
+                    code: code.user_code.clone(),
+                    url: code.verification_uri.clone(),
+                };
+                let next = match twitch_auth::wait(&client_id, &code) {
+                    Ok(t) => Login::Done(t),
+                    Err(e) => Login::Failed(e),
+                };
+                *login.lock().unwrap() = next;
+            });
+        }
+        if ui.small_button("Pop out").clicked() {
+            let channel = channel_name(&project.settings.stream.twitch_channel);
+            crate::dialog::open_url(&format!("https://www.twitch.tv/popout/{channel}/chat"));
+        }
+    });
 }
 
 fn go_live(st: &mut UiState, project: &Project, engine: &mut Engine) {

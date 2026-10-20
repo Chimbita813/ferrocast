@@ -28,20 +28,29 @@ impl Drop for Handle {
 }
 
 /// Fetches an `https://` URL, following redirects, and returns the body.
-/// Fails on any status other than 200. `limit` caps the body size.
+/// Fails on any status other than 2xx. `limit` caps the body size.
 pub fn get(url: &str, user_agent: &str, accept: &str, limit: usize) -> Result<Vec<u8>> {
-    request(
-        "GET",
-        url,
-        user_agent,
-        &format!("Accept: {accept}\r\n"),
-        &[],
-        limit,
-    )
+    let headers = format!("Accept: {accept}\r\n");
+    ok(url, request("GET", url, user_agent, &headers, &[], limit)?)
+}
+
+/// GET with extra header lines; returns the status and body whatever the status.
+pub fn get_status(url: &str, user_agent: &str, headers: &str) -> Result<(u32, Vec<u8>)> {
+    request("GET", url, user_agent, headers, &[], 1024 * 1024)
 }
 
 /// POSTs a form (`a=1&b=2`) with extra header lines (each ending in CRLF).
 pub fn post_form(url: &str, user_agent: &str, headers: &str, form: &str) -> Result<Vec<u8>> {
+    ok(url, post_form_status(url, user_agent, headers, form)?)
+}
+
+/// Like `post_form`, but returns the status and body whatever the status.
+pub fn post_form_status(
+    url: &str,
+    user_agent: &str,
+    headers: &str,
+    form: &str,
+) -> Result<(u32, Vec<u8>)> {
     let headers = format!("{headers}Content-Type: application/x-www-form-urlencoded\r\n");
     request(
         "POST",
@@ -53,6 +62,21 @@ pub fn post_form(url: &str, user_agent: &str, headers: &str, form: &str) -> Resu
     )
 }
 
+fn ok(url: &str, (status, body): (u32, Vec<u8>)) -> Result<Vec<u8>> {
+    if (200..300).contains(&status) {
+        return Ok(body);
+    }
+    let host = url
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    Err(windows::core::Error::new(
+        ERROR_INVALID_DATA.to_hresult(),
+        format!("HTTP {status} from {host}"),
+    ))
+}
+
 fn request(
     method: &str,
     url: &str,
@@ -60,7 +84,7 @@ fn request(
     headers: &str,
     body: &[u8],
     limit: usize,
-) -> Result<Vec<u8>> {
+) -> Result<(u32, Vec<u8>)> {
     let rest = url
         .strip_prefix("https://")
         .ok_or_else(|| windows::core::Error::new(E_INVALIDARG, "only https URLs are supported"))?;
@@ -112,13 +136,6 @@ fn request(
             &mut len,
             std::ptr::null_mut(),
         )?;
-        if !(200..300).contains(&status) {
-            return Err(windows::core::Error::new(
-                ERROR_INVALID_DATA.to_hresult(),
-                format!("HTTP {status} from {host}"),
-            ));
-        }
-
         let mut body = Vec::new();
         let mut buf = vec![0u8; 64 * 1024];
         loop {
@@ -140,6 +157,6 @@ fn request(
                 ));
             }
         }
-        Ok(body)
+        Ok((status, body))
     }
 }
