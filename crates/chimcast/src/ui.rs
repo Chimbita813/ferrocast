@@ -21,6 +21,41 @@ enum Drag {
 enum AddDialog {
     Image,
     Browser,
+    /// Index into `WIDGETS`.
+    Widget(usize),
+}
+
+/// Streamlabs widgets: (name, settings page, piece of its widget URL).
+const WIDGETS: &[(&str, &str, &str)] = &[
+    (
+        "Alert Box",
+        "https://streamlabs.com/dashboard#/alertbox",
+        "alert-box",
+    ),
+    (
+        "Chat Box",
+        "https://streamlabs.com/dashboard#/chatbox",
+        "chat-box",
+    ),
+    (
+        "Event List",
+        "https://streamlabs.com/dashboard#/eventlist",
+        "event-list",
+    ),
+];
+
+/// The Streamlabs settings page for a widget URL, if it is one.
+fn widget_page(url: &str) -> Option<&'static str> {
+    if !url.contains("streamlabs.com") {
+        return None;
+    }
+    Some(
+        WIDGETS
+            .iter()
+            .find(|(_, _, part)| url.contains(part))
+            .map(|(_, page, _)| *page)
+            .unwrap_or("https://streamlabs.com/dashboard"),
+    )
 }
 
 #[derive(Default)]
@@ -274,6 +309,14 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
                 st.add_dialog = Some(AddDialog::Browser);
                 ui.close();
             }
+            ui.menu_button("Streamlabs widget", |ui| {
+                for (i, (name, ..)) in WIDGETS.iter().enumerate() {
+                    if ui.button(format!("{name}...")).clicked() {
+                        st.add_dialog = Some(AddDialog::Widget(i));
+                        ui.close();
+                    }
+                }
+            });
             if ui.button("Color").clicked() {
                 add_source(
                     project,
@@ -403,6 +446,15 @@ fn properties(
                 *url = edit_url.trim().to_string();
                 [*width, *height] = *edit_size;
                 item.rect = page_rect(*width, *height, canvas);
+            }
+            if let Some(page) = widget_page(url) {
+                if ui
+                    .button("Edit on Streamlabs")
+                    .on_hover_text("Change images, sounds and text for each event")
+                    .clicked()
+                {
+                    crate::dialog::open_url(page);
+                }
             }
             if ui
                 .button("Refresh")
@@ -715,6 +767,7 @@ fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dial
     let title = match dialog {
         AddDialog::Image => "Add image",
         AddDialog::Browser => "Add browser source",
+        AddDialog::Widget(_) => "Add Streamlabs widget",
     };
     let mut open = true;
     let mut done = false;
@@ -756,6 +809,37 @@ fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dial
                         .unwrap_or_else(|| "Image".into());
                     add_source(project, st, name, VideoSourceKind::Image { path });
                     st.image_path.clear();
+                    done = true;
+                }
+            }
+            AddDialog::Widget(i) => {
+                let (name, page, _) = WIDGETS[i];
+                ui.label(egui::RichText::new(name).strong());
+                ui.label(format!(
+                    "1. Set up the {name} on Streamlabs: what each event (follow, sub, bits...) shows and plays."
+                ));
+                if ui.button(format!("Open {name} settings on Streamlabs")).clicked() {
+                    crate::dialog::open_url(page);
+                }
+                ui.label("2. Copy the Widget URL at the top of that page and paste it here:");
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut st.browser_url)
+                        .hint_text("https://streamlabs.com/...")
+                        .desired_width(420.0),
+                );
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let url = st.browser_url.trim().to_string();
+                if (ui.button("Add").clicked() || enter) && !url.is_empty() {
+                    // Widgets are laid out for the whole canvas.
+                    let v = &project.settings.video;
+                    let (width, height) = (v.width, v.height);
+                    add_source(
+                        project,
+                        st,
+                        name.to_string(),
+                        VideoSourceKind::Browser { url, width, height },
+                    );
+                    st.browser_url.clear();
                     done = true;
                 }
             }
