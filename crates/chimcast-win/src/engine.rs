@@ -16,11 +16,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use ferrocast_core::{AudioSourceKind, Id, Project, Rect, SceneItem, VideoSourceKind};
-use ferrocast_media::audio::{self, Mixer};
-use ferrocast_media::output::{Mp4Sink, OutputStatus, OutputWorker, PacketSink};
-use ferrocast_media::rtmp::RtmpPublisher;
-use ferrocast_media::{AudioInfo, Packet, StreamInfo, VideoInfo};
+use chimcast_core::{AudioSourceKind, Id, Project, Rect, SceneItem, VideoSourceKind};
+use chimcast_media::audio::{self, Mixer};
+use chimcast_media::output::{Mp4Sink, OutputStatus, OutputWorker, PacketSink};
+use chimcast_media::rtmp::RtmpPublisher;
+use chimcast_media::{AudioInfo, Packet, StreamInfo, VideoInfo};
 use windows::Win32::Graphics::Direct3D11::ID3D11ShaderResourceView;
 
 use crate::aac_encoder::AacEncoder;
@@ -453,7 +453,7 @@ impl Engine {
             .map_err(|e| format!("encoder: {}", e.message()))?;
         let dir = project.settings.recording.directory.clone();
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let path = dir.join(format!("Ferrocast {}.mp4", timestamp()));
+        let path = dir.join(format!("Chimcast {}.mp4", timestamp()));
         let info = Self::stream_info(project);
         let p = path.clone();
         let worker = OutputWorker::spawn("record", 600, move || {
@@ -473,7 +473,7 @@ impl Engine {
         if st.key.trim().is_empty() {
             return Err("set a stream key in Settings first".into());
         }
-        ferrocast_media::rtmp::parse_url(&st.server).map_err(|e| e.to_string())?;
+        chimcast_media::rtmp::parse_url(&st.server).map_err(|e| e.to_string())?;
         self.ensure_encoding(project)
             .map_err(|e| format!("encoder: {}", e.message()))?;
         let (server, key) = (st.server.clone(), st.key.trim().to_string());

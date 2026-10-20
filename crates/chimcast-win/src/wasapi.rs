@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use ferrocast_media::audio::Mixer;
+use chimcast_media::audio::Mixer;
 use windows::core::HSTRING;
 use windows::Win32::Media::Audio::*;
 use windows::Win32::Media::KernelStreaming::WAVE_FORMAT_EXTENSIBLE;

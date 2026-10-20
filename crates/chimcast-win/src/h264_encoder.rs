@@ -6,7 +6,7 @@
 
 use std::sync::mpsc::{Receiver, Sender};
 
-use ferrocast_media::{h264, Packet, Track};
+use chimcast_media::{h264, Packet, Track};
 use windows::core::{Interface, GUID};
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 use windows::Win32::Media::MediaFoundation::*;

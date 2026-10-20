@@ -1,6 +1,6 @@
 //! AAC-LC encoding with the Media Foundation AAC encoder (ships with Windows).
 
-use ferrocast_media::{audio, Packet, Track};
+use chimcast_media::{audio, Packet, Track};
 use windows::Win32::Media::MediaFoundation::*;
 
 use crate::mf::{self, Transform};

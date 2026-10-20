@@ -1,9 +1,9 @@
-//! Windows engine for Ferrocast.
+//! Windows engine for Chimcast.
 //!
 //! Everything that touches the OS lives here: monitor/window capture through
 //! Windows.Graphics.Capture, webcams through Media Foundation, a D3D11
 //! compositor, hardware H.264 and AAC encoding through Media Foundation
-//! transforms, and WASAPI audio capture. On other platforms the crate is empty.
+//! transforms, WASAPI audio capture, and the self-updater. On other platforms the crate is empty.
 
 #![cfg(windows)]
 
@@ -14,10 +14,12 @@ pub mod d3d;
 pub mod devices;
 pub mod engine;
 pub mod h264_encoder;
+pub mod http;
 pub mod image;
 pub mod mf;
 pub mod nv12;
 pub mod sysinfo;
+pub mod update;
 pub mod wasapi;
 pub mod webcam;
 

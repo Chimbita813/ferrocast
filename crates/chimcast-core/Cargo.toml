@@ -1,6 +1,6 @@
 [package]
-name = "ferrocast-core"
-description = "Project model for Ferrocast: scenes, sources and settings"
+name = "chimcast-core"
+description = "Project model for Chimcast: scenes, sources and settings"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use ferrocast_media::flv::FlvWriter;
-use ferrocast_media::mp4::Mp4Writer;
-use ferrocast_media::rtmp::RtmpPublisher;
-use ferrocast_media::{aac, h264, AudioInfo, Packet, StreamInfo, Track, VideoInfo};
+use chimcast_media::flv::FlvWriter;
+use chimcast_media::mp4::Mp4Writer;
+use chimcast_media::rtmp::RtmpPublisher;
+use chimcast_media::{aac, h264, AudioInfo, Packet, StreamInfo, Track, VideoInfo};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
@@ -91,7 +91,7 @@ fn packets() -> Vec<Packet> {
 }
 
 fn tmp(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ferrocast-it-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("chimcast-it-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }

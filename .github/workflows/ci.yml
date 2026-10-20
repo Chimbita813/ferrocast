@@ -20,12 +20,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test -p ferrocast-core -p ferrocast-media --lib
-      - run: cargo build --release -p ferrocast
+      - run: cargo test -p chimcast-core -p chimcast-media --lib
+      - run: cargo build --release -p chimcast
+        env:
+          # Baked into the exe so it can tell whether a release is newer than itself.
+          CHIMCAST_BUILD: ${{ github.event_name == 'push' && github.run_number || '0' }}
+          CHIMCAST_UPDATE_REPO: ${{ github.repository }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ferrocast-windows-x64
-          path: target/release/ferrocast.exe
+          name: chimcast-windows-x64
+          path: target/release/chimcast.exe
 
   media-interop:
     name: Muxer and RTMP tests against FFmpeg
@@ -35,4 +39,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - run: cargo test -p ferrocast-core -p ferrocast-media
+      - run: cargo test -p chimcast-core -p chimcast-media
+
+  # Every green build of main becomes a release; the app updates itself from the latest one.
+  release:
+    name: Publish release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [windows, media-interop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chimcast-windows-x64
+      - run: sha256sum chimcast.exe > chimcast.exe.sha256
+      - run: >
+          gh release create "build-${{ github.run_number }}"
+          chimcast.exe chimcast.exe.sha256
+          --repo "${{ github.repository }}"
+          --target "${{ github.sha }}"
+          --title "Chimcast build ${{ github.run_number }}"
+          --notes "Built from ${{ github.sha }}."
+          --latest
+        env:
+          GH_TOKEN: ${{ github.token }}

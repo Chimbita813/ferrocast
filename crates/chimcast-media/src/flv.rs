@@ -57,7 +57,7 @@ pub fn metadata(info: &StreamInfo) -> Vec<(String, Value)> {
     }
     props.push((
         "encoder".to_string(),
-        Value::str(concat!("Ferrocast ", env!("CARGO_PKG_VERSION"))),
+        Value::str(concat!("Chimcast ", env!("CARGO_PKG_VERSION"))),
     ));
     props
 }

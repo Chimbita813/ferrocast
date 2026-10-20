@@ -1,4 +1,4 @@
-//! Ferrocast: a lightweight streaming and recording app for Windows.
+//! Chimcast: a lightweight streaming and recording app for Windows.
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
@@ -20,7 +20,7 @@ fn main() {
     }
     #[cfg(not(windows))]
     {
-        eprintln!("Ferrocast uses Windows capture and encoding APIs and only runs on Windows.");
+        eprintln!("Chimcast uses Windows capture and encoding APIs and only runs on Windows.");
         std::process::exit(1);
     }
 }

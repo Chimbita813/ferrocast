@@ -1,0 +1,10 @@
+[package]
+name = "chimcast-media"
+description = "Platform-independent media plumbing for Chimcast: H.264/AAC helpers, MP4 and FLV muxers, RTMP publisher, audio mixer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+log.workspace = true

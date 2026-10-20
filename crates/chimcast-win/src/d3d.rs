@@ -41,7 +41,7 @@ impl Device {
         let mut device = None;
         let mut context = None;
         let mut flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
-        if cfg!(debug_assertions) && std::env::var_os("FERROCAST_D3D_DEBUG").is_some() {
+        if cfg!(debug_assertions) && std::env::var_os("CHIMCAST_D3D_DEBUG").is_some() {
             flags |= D3D11_CREATE_DEVICE_DEBUG;
         }
         unsafe {

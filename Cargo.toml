@@ -9,9 +9,9 @@ license = "MIT"
 rust-version = "1.88"
 
 [workspace.dependencies]
-ferrocast-core = { path = "crates/ferrocast-core" }
-ferrocast-media = { path = "crates/ferrocast-media" }
-ferrocast-win = { path = "crates/ferrocast-win" }
+chimcast-core = { path = "crates/chimcast-core" }
+chimcast-media = { path = "crates/chimcast-media" }
+chimcast-win = { path = "crates/chimcast-win" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

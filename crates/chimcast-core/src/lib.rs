@@ -1,4 +1,4 @@
-//! Project model for Ferrocast.
+//! Project model for Chimcast.
 //!
 //! Everything here is plain data: scenes, the sources placed in them, global
 //! audio sources and output settings. The Windows engine reads a [`Project`]
@@ -197,6 +197,13 @@ pub struct Settings {
     pub encoder: EncoderSettings,
     pub recording: RecordingSettings,
     pub stream: StreamSettings,
+    /// Check GitHub for a newer build on launch and install it.
+    #[serde(default = "enabled")]
+    pub auto_update: bool,
+}
+
+fn enabled() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -219,6 +226,7 @@ impl Default for Settings {
                 server: STREAM_PRESETS[0].1.to_string(),
                 key: String::new(),
             },
+            auto_update: true,
         }
     }
 }
@@ -516,7 +524,7 @@ mod tests {
 
     #[test]
     fn save_load_roundtrip_and_id_recovery() {
-        let dir = std::env::temp_dir().join(format!("ferrocast-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("chimcast-test-{}", std::process::id()));
         let path = dir.join("project.json");
         let mut p = Project::default();
         p.settings.stream.key = "live_123".into();

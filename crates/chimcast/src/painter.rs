@@ -5,9 +5,9 @@
 
 use std::collections::HashMap;
 
+use chimcast_win::d3d::{compile_shader, Device};
 use egui::epaint::{ImageDelta, Primitive, Vertex};
 use egui::{ClippedPrimitive, TextureFilter, TextureId, TexturesDelta};
-use ferrocast_win::d3d::{compile_shader, Device};
 use windows::core::{Interface, Result, PCSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct3D::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;

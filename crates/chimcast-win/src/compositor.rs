@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ferrocast_core::Rect;
+use chimcast_core::Rect;
 use windows::Win32::Graphics::Direct3D::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;

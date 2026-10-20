@@ -2,12 +2,12 @@
 
 use std::time::{Duration, Instant};
 
-use egui::{Color32, CornerRadius, Pos2, Rect as ERect, Sense, Stroke, StrokeKind, Ui, Vec2};
-use ferrocast_core::{
+use chimcast_core::{
     AudioSourceKind, Id, Project, Rect, VideoSourceKind, AUDIO_BITRATES_KBPS, STREAM_PRESETS,
 };
-use ferrocast_media::output::OutputState;
-use ferrocast_win::{devices, Engine};
+use chimcast_media::output::OutputState;
+use chimcast_win::{devices, Engine};
+use egui::{Color32, CornerRadius, Pos2, Rect as ERect, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::painter::PREVIEW;
 
@@ -27,6 +27,8 @@ pub struct UiState {
     message: Option<(String, Instant)>,
     recording_started: Option<Instant>,
     streaming_started: Option<Instant>,
+    /// Updater status, filled in by the app each frame.
+    pub update: Option<String>,
 }
 
 impl UiState {
@@ -94,6 +96,10 @@ fn status_bar(ui: &mut Ui, st: &mut UiState, engine: &Engine) {
         if let Some(err) = &s.last_error {
             ui.separator();
             ui.colored_label(Color32::LIGHT_RED, err);
+        }
+        if let Some(note) = &st.update {
+            ui.separator();
+            ui.label(note);
         }
         if let Some((msg, at)) = &st.message {
             if at.elapsed() < Duration::from_secs(8) {
@@ -619,6 +625,15 @@ fn settings(ui: &mut Ui, st: &mut UiState, project: &mut Project, live: bool) {
                 );
                 ui.checkbox(&mut st.show_key, "show");
             });
+            ui.end_row();
+
+            ui.label(egui::RichText::new("App").strong());
+            ui.end_row();
+            ui.label("Updates");
+            ui.checkbox(
+                &mut s.auto_update,
+                "Install new builds when Chimcast starts",
+            );
             ui.end_row();
         });
     if live {

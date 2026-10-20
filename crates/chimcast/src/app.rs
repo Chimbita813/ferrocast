@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ferrocast_core::Project;
-use ferrocast_win::d3d::Device;
-use ferrocast_win::Engine;
+use chimcast_core::Project;
+use chimcast_win::d3d::Device;
+use chimcast_win::update::{UpdateState, Updater};
+use chimcast_win::Engine;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
@@ -24,13 +25,20 @@ use crate::ui::{self, UiState};
 const UI_FRAME: Duration = Duration::from_millis(33);
 /// Project changes are written at most this often.
 const SAVE_DELAY: Duration = Duration::from_secs(2);
+/// Set by CI to the workflow run number; local builds are 0 and never self-update.
+const BUILD: Option<&str> = option_env!("CHIMCAST_BUILD");
+/// The GitHub repository releases come from, also set by CI (follows a repo rename).
+const UPDATE_REPO: &str = match option_env!("CHIMCAST_UPDATE_REPO") {
+    Some(r) => r,
+    None => "Chimbita813/ferrocast",
+};
 
 pub fn fatal(msg: &str) {
     unsafe {
         MessageBoxW(
             None,
             &HSTRING::from(msg),
-            &HSTRING::from("Ferrocast"),
+            &HSTRING::from("Chimcast"),
             MB_OK | MB_ICONERROR,
         );
     }
@@ -52,6 +60,10 @@ struct App {
     next_frame: Instant,
     dirty_since: Option<Instant>,
     error: Option<String>,
+    updater: Updater,
+    /// Recorded or streamed this session: then an update waits for the next launch.
+    went_live: bool,
+    restart: bool,
 }
 
 fn default_recording_dir() -> PathBuf {
@@ -75,6 +87,8 @@ impl App {
                 p
             }
         };
+        let build = BUILD.and_then(|b| b.parse().ok()).unwrap_or(0);
+        let updater = Updater::start(UPDATE_REPO, build, project.settings.auto_update);
         Self {
             project,
             path,
@@ -82,6 +96,9 @@ impl App {
             next_frame: Instant::now(),
             dirty_since: None,
             error: None,
+            updater,
+            went_live: false,
+            restart: false,
         }
     }
 
@@ -94,9 +111,17 @@ impl App {
 
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<Running, String> {
         let attrs = Window::default_attributes()
-            .with_title("Ferrocast")
+            .with_title("Chimcast")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 820.0))
-            .with_min_inner_size(winit::dpi::LogicalSize::new(800.0, 560.0));
+            .with_min_inner_size(winit::dpi::LogicalSize::new(800.0, 560.0))
+            .with_window_icon(
+                winit::window::Icon::from_rgba(
+                    include_bytes!("../../../assets/icon-64.rgba").to_vec(),
+                    64,
+                    64,
+                )
+                .ok(),
+            );
         let window = Arc::new(event_loop.create_window(attrs).map_err(|e| e.to_string())?);
         let hwnd = match window.window_handle().map_err(|e| e.to_string())?.as_raw() {
             RawWindowHandle::Win32(h) => HWND(h.hwnd.get() as *mut _),
@@ -132,6 +157,8 @@ impl App {
         let Some(r) = self.running.as_mut() else {
             return;
         };
+        self.went_live |= r.engine.is_live();
+        r.ui.update = update_note(&self.updater.state(), self.went_live);
         let raw = r.egui.take_egui_input(&r.window);
         let ctx = r.egui.egui_ctx().clone();
         let mut changed = false;
@@ -215,6 +242,18 @@ impl ApplicationHandler for App {
         let Some(r) = self.running.as_ref() else {
             return;
         };
+        // A new build was installed before anything went live: switch to it now.
+        if matches!(self.updater.state(), UpdateState::Ready { .. })
+            && !self.went_live
+            && !r.engine.is_live()
+        {
+            log::info!("restarting into the new build");
+            self.save();
+            self.running = None;
+            self.restart = true;
+            event_loop.exit();
+            return;
+        }
         let now = Instant::now();
         if now >= self.next_frame {
             self.next_frame = now + UI_FRAME;
@@ -231,8 +270,30 @@ pub fn run() -> Result<(), String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let mut app = App::new();
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
+    if app.restart {
+        if let Err(e) = app.updater.relaunch() {
+            log::error!("couldn't start the new build: {e}");
+            return Err(format!(
+                "Chimcast was updated, but couldn't restart itself ({e}). Open it again."
+            ));
+        }
+    }
     match app.error {
         Some(e) => Err(e),
         None => Ok(()),
+    }
+}
+
+/// Status-bar text for the updater, if there's anything worth showing.
+fn update_note(state: &UpdateState, went_live: bool) -> Option<String> {
+    match state {
+        UpdateState::Off | UpdateState::UpToDate => None,
+        UpdateState::Checking => Some("Checking for updates".into()),
+        UpdateState::Downloading { build } => Some(format!("Downloading update (build {build})")),
+        UpdateState::Ready { build } if went_live => Some(format!(
+            "Build {build} installed; it starts next time you open Chimcast"
+        )),
+        UpdateState::Ready { build } => Some(format!("Restarting into build {build}")),
+        UpdateState::Failed(e) => Some(format!("Update: {e}")),
     }
 }
