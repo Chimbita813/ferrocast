@@ -168,6 +168,11 @@ impl App {
         let output = ctx.run_ui(raw, |ui| {
             changed |= ui::draw(ui, &mut r.ui, &mut self.project, &mut r.engine);
         });
+        for cmd in &output.platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = cmd {
+                crate::clipboard::set(text);
+            }
+        }
         r.egui
             .handle_platform_output(&r.window, output.platform_output);
 
@@ -218,6 +223,21 @@ impl ApplicationHandler for App {
         let Some(r) = self.running.as_mut() else {
             return;
         };
+        // egui keeps its own clipboard: load the system one before a paste shortcut
+        // (Ctrl+V / Shift+Insert) reaches it.
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event {
+            use winit::keyboard::{Key, NamedKey};
+            let paste_key = match &key.logical_key {
+                Key::Character(c) => c.eq_ignore_ascii_case("v"),
+                Key::Named(NamedKey::Insert | NamedKey::Paste) => true,
+                _ => false,
+            };
+            if key.state.is_pressed() && paste_key {
+                if let Some(text) = crate::clipboard::get() {
+                    r.egui.set_clipboard_text(text);
+                }
+            }
+        }
         let response = r.egui.on_window_event(&r.window, &event);
         match event {
             WindowEvent::CloseRequested => {

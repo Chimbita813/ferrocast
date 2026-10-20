@@ -4,6 +4,10 @@
 
 #[cfg(windows)]
 mod app;
+#[cfg(windows)]
+mod clipboard;
+#[cfg(windows)]
+mod dialog;
 mod logger;
 #[cfg(windows)]
 mod painter;

@@ -376,11 +376,27 @@ fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dial
         .show(ctx, |ui| match dialog {
             AddDialog::Image => {
                 ui.label("Path to a PNG/JPEG/BMP file:");
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut st.image_path)
-                        .hint_text("C:\\Users\\you\\Pictures\\logo.png")
-                        .desired_width(420.0),
-                );
+                let field = ui
+                    .horizontal(|ui| {
+                        let field = ui.add(
+                            egui::TextEdit::singleline(&mut st.image_path)
+                                .hint_text("C:\\Users\\you\\Pictures\\logo.png")
+                                .desired_width(340.0),
+                        );
+                        if ui.button("Browse...").clicked() {
+                            if let Some(p) = crate::dialog::pick_file(
+                                "Choose an image",
+                                &[
+                                    ("Images", "*.png;*.jpg;*.jpeg;*.bmp;*.gif"),
+                                    ("All files", "*.*"),
+                                ],
+                            ) {
+                                st.image_path = p.display().to_string();
+                            }
+                        }
+                        field
+                    })
+                    .inner;
                 let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if (ui.button("Add").clicked() || enter) && !st.image_path.trim().is_empty() {
                     let path = std::path::PathBuf::from(st.image_path.trim().trim_matches('"'));
@@ -398,11 +414,24 @@ fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dial
                     st.browser_size = [800, 600];
                 }
                 ui.label("Widget URL (from the Streamlabs dashboard) or path to an HTML file:");
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut st.browser_url)
-                        .hint_text("https://streamlabs.com/alert-box/v3/...")
-                        .desired_width(420.0),
-                );
+                let field = ui
+                    .horizontal(|ui| {
+                        let field = ui.add(
+                            egui::TextEdit::singleline(&mut st.browser_url)
+                                .hint_text("https://streamlabs.com/alert-box/v3/...")
+                                .desired_width(340.0),
+                        );
+                        if ui.button("Browse...").clicked() {
+                            if let Some(p) = crate::dialog::pick_file(
+                                "Choose a web page",
+                                &[("Web pages", "*.html;*.htm"), ("All files", "*.*")],
+                            ) {
+                                st.browser_url = p.display().to_string();
+                            }
+                        }
+                        field
+                    })
+                    .inner;
                 let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 ui.horizontal(|ui| page_size(ui, &mut st.browser_size));
                 if (ui.button("Add").clicked() || enter) && !st.browser_url.trim().is_empty() {
@@ -426,6 +455,12 @@ fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dial
 
 fn page_size(ui: &mut Ui, size: &mut [u32; 2]) {
     ui.label("Page size");
+    for preset in [[800, 600], [1280, 720], [1920, 1080]] {
+        let label = format!("{}x{}", preset[0], preset[1]);
+        if ui.selectable_label(*size == preset, label).clicked() {
+            *size = preset;
+        }
+    }
     ui.add(
         egui::DragValue::new(&mut size[0])
             .range(16..=7680)
