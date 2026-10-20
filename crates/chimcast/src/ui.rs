@@ -17,8 +17,15 @@ enum Drag {
     Resize,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum AddDialog {
+    Image,
+    Browser,
+}
+
 #[derive(Default)]
 pub struct UiState {
+    add_dialog: Option<AddDialog>,
     selected: Option<Id>,
     drag: Option<Drag>,
     show_settings: bool,
@@ -62,6 +69,9 @@ pub fn draw(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
         });
     egui::CentralPanel::default_margins().show(ui, |ui| preview(ui, st, project));
 
+    if let Some(dialog) = st.add_dialog {
+        add_dialog(ui.ctx(), st, project, dialog);
+    }
     if st.show_settings {
         let mut open = true;
         egui::Window::new("Settings")
@@ -243,44 +253,15 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
                     ui.label("No cameras found");
                 }
             });
-            ui.menu_button("Image", |ui| {
-                ui.label("Path to a PNG/JPEG/BMP file:");
-                ui.text_edit_singleline(&mut st.image_path);
-                if ui.button("Add").clicked() && !st.image_path.trim().is_empty() {
-                    let path = std::path::PathBuf::from(st.image_path.trim().trim_matches('"'));
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| "Image".into());
-                    add_source(project, st, name, VideoSourceKind::Image { path });
-                    st.image_path.clear();
-                    ui.close();
-                }
-            });
-            ui.menu_button("Browser", |ui| {
-                if st.browser_size == [0, 0] {
-                    st.browser_size = [800, 600];
-                }
-                ui.label("Widget URL or path to an HTML file:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut st.browser_url)
-                        .hint_text("https://streamlabs.com/alert-box/v3/...")
-                        .desired_width(360.0),
-                );
-                page_size(ui, &mut st.browser_size);
-                if ui.button("Add").clicked() && !st.browser_url.trim().is_empty() {
-                    let url = st.browser_url.trim().to_string();
-                    let [width, height] = st.browser_size;
-                    add_source(
-                        project,
-                        st,
-                        browser_name(&url),
-                        VideoSourceKind::Browser { url, width, height },
-                    );
-                    st.browser_url.clear();
-                    ui.close();
-                }
-            });
+            // Text fields live in their own window: a menu closes on the first click inside it.
+            if ui.button("Image...").clicked() {
+                st.add_dialog = Some(AddDialog::Image);
+                ui.close();
+            }
+            if ui.button("Browser...").clicked() {
+                st.add_dialog = Some(AddDialog::Browser);
+                ui.close();
+            }
             if ui.button("Color").clicked() {
                 add_source(
                     project,
@@ -377,6 +358,69 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
                 ui.colored_label(Color32::LIGHT_RED, err);
             }
         }
+    }
+}
+
+fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dialog: AddDialog) {
+    let title = match dialog {
+        AddDialog::Image => "Add image",
+        AddDialog::Browser => "Add browser source",
+    };
+    let mut open = true;
+    let mut done = false;
+    egui::Window::new(title)
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| match dialog {
+            AddDialog::Image => {
+                ui.label("Path to a PNG/JPEG/BMP file:");
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut st.image_path)
+                        .hint_text("C:\\Users\\you\\Pictures\\logo.png")
+                        .desired_width(420.0),
+                );
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if (ui.button("Add").clicked() || enter) && !st.image_path.trim().is_empty() {
+                    let path = std::path::PathBuf::from(st.image_path.trim().trim_matches('"'));
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "Image".into());
+                    add_source(project, st, name, VideoSourceKind::Image { path });
+                    st.image_path.clear();
+                    done = true;
+                }
+            }
+            AddDialog::Browser => {
+                if st.browser_size == [0, 0] {
+                    st.browser_size = [800, 600];
+                }
+                ui.label("Widget URL (from the Streamlabs dashboard) or path to an HTML file:");
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut st.browser_url)
+                        .hint_text("https://streamlabs.com/alert-box/v3/...")
+                        .desired_width(420.0),
+                );
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                ui.horizontal(|ui| page_size(ui, &mut st.browser_size));
+                if (ui.button("Add").clicked() || enter) && !st.browser_url.trim().is_empty() {
+                    let url = st.browser_url.trim().to_string();
+                    let [width, height] = st.browser_size;
+                    add_source(
+                        project,
+                        st,
+                        browser_name(&url),
+                        VideoSourceKind::Browser { url, width, height },
+                    );
+                    st.browser_url.clear();
+                    done = true;
+                }
+            }
+        });
+    if !open || done {
+        st.add_dialog = None;
     }
 }
 
