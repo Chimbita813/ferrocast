@@ -71,20 +71,28 @@ fn convert(data: &[u8], fmt: &Format, out: &mut Vec<f32>) {
     out.clear();
     match fmt.sample {
         SampleFormat::F32 => out.extend(
-            data.chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_le_bytes(*b)),
         ),
         SampleFormat::I16 => out.extend(
-            data.chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0),
+            data.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|b| i16::from_le_bytes(*b) as f32 / 32768.0),
         ),
         SampleFormat::I24 => out.extend(
-            data.chunks_exact(3)
+            data.as_chunks::<3>()
+                .0
+                .iter()
                 .map(|b| (i32::from_le_bytes([0, b[0], b[1], b[2]]) >> 8) as f32 / 8_388_608.0),
         ),
         SampleFormat::I32 => out.extend(
-            data.chunks_exact(4)
-                .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / 2_147_483_648.0),
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| i32::from_le_bytes(*b) as f32 / 2_147_483_648.0),
         ),
     }
 }
