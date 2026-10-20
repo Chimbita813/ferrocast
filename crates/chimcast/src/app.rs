@@ -111,7 +111,10 @@ impl App {
 
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<Running, String> {
         let attrs = Window::default_attributes()
-            .with_title("Chimcast")
+            .with_title(match BUILD {
+                Some(b) => format!("Chimcast (build {b})"),
+                None => "Chimcast (dev build)".into(),
+            })
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 820.0))
             .with_min_inner_size(winit::dpi::LogicalSize::new(800.0, 560.0))
             .with_window_icon(

@@ -185,7 +185,7 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
         });
 
     ui.horizontal(|ui| {
-        ui.menu_button("+", |ui| {
+        ui.menu_button("+ Add source", |ui| {
             ui.menu_button("Display", |ui| {
                 for (i, m) in devices::monitors().iter().enumerate() {
                     if ui.button(&m.name).clicked() {
@@ -476,7 +476,7 @@ fn mixer(ui: &mut Ui, project: &mut Project, engine: &Engine) {
     if let Some(id) = remove {
         project.remove_audio(id);
     }
-    ui.menu_button("+", |ui| {
+    ui.menu_button("+ Add audio", |ui| {
         let mut add = |ui: &mut Ui, name: String, kind: AudioSourceKind| {
             if ui.button(&name).clicked() {
                 project.add_audio(&name, kind);
