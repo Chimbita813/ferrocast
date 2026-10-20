@@ -26,6 +26,8 @@ enum AddDialog {
 #[derive(Default)]
 pub struct UiState {
     add_dialog: Option<AddDialog>,
+    show_connect: bool,
+    stream_error: Option<String>,
     selected: Option<Id>,
     drag: Option<Drag>,
     show_settings: bool,
@@ -69,6 +71,9 @@ pub fn draw(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
         });
     egui::CentralPanel::default_margins().show(ui, |ui| preview(ui, st, project));
 
+    if st.show_connect {
+        connect_dialog(ui.ctx(), st, project, engine);
+    }
     if let Some(dialog) = st.add_dialog {
         add_dialog(ui.ctx(), st, project, dialog);
     }
@@ -518,6 +523,106 @@ fn eye_icon(ui: &mut Ui, visible: bool) -> ERect {
     rect
 }
 
+fn go_live(st: &mut UiState, project: &Project, engine: &mut Engine) {
+    match engine.start_streaming(project) {
+        Ok(()) => {
+            st.stream_error = None;
+            st.streaming_started = Some(Instant::now());
+            st.say("Connecting to the stream server...");
+        }
+        Err(e) => {
+            log::warn!("can't stream: {e}");
+            st.stream_error = Some(e);
+        }
+    }
+}
+
+/// Where each service shows the stream key.
+fn key_page(service: &str) -> Option<&'static str> {
+    match service {
+        "Twitch" => Some("https://dashboard.twitch.tv/settings/stream"),
+        "YouTube" => Some("https://studio.youtube.com/channel/UC/livestreaming"),
+        "Kick" => Some("https://kick.com/dashboard/settings/stream"),
+        _ => None,
+    }
+}
+
+/// "Connect to Twitch": pick the service, paste the stream key, go live.
+fn connect_dialog(
+    ctx: &egui::Context,
+    st: &mut UiState,
+    project: &mut Project,
+    engine: &mut Engine,
+) {
+    let mut open = true;
+    let mut go = false;
+    egui::Window::new("Connect your stream")
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            let s = &mut project.settings.stream;
+            let service = STREAM_PRESETS
+                .iter()
+                .find(|(_, url)| *url == s.server)
+                .map(|(name, _)| *name)
+                .unwrap_or("Custom");
+            ui.horizontal(|ui| {
+                ui.label("Service");
+                for (name, url) in STREAM_PRESETS {
+                    if ui.selectable_label(s.server == *url, *name).clicked() {
+                        s.server = url.to_string();
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            if let Some(page) = key_page(service) {
+                ui.label(format!(
+                    "1. Copy your stream key from the {service} dashboard:"
+                ));
+                if ui
+                    .button(format!("Open {service} stream key page"))
+                    .clicked()
+                {
+                    crate::dialog::open_url(page);
+                }
+                ui.add_space(4.0);
+                ui.label("2. Paste it here (Ctrl+V):");
+            } else {
+                ui.label(format!("Server: {}", s.server));
+                ui.label("Stream key:");
+            }
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut s.key)
+                        .password(!st.show_key)
+                        .hint_text("live_...")
+                        .desired_width(320.0),
+                );
+                ui.checkbox(&mut st.show_key, "show");
+            });
+            ui.weak("Keep this key private: anyone with it can stream to your channel.");
+            ui.add_space(6.0);
+            let ready = !s.key.trim().is_empty();
+            if ui
+                .add_enabled(
+                    ready,
+                    egui::Button::new(format!("Save and go live on {service}")),
+                )
+                .clicked()
+            {
+                go = true;
+            }
+        });
+    if go {
+        st.show_connect = false;
+        go_live(st, project, engine);
+    } else if !open {
+        st.show_connect = false;
+    }
+}
+
 fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dialog: AddDialog) {
     let title = match dialog {
         AddDialog::Image => "Add image",
@@ -779,13 +884,15 @@ fn controls(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
                 .add_sized(wide, egui::Button::new("Start Streaming"))
                 .clicked()
             {
-                match engine.start_streaming(project) {
-                    Ok(()) => {
-                        st.streaming_started = Some(Instant::now());
-                        st.say("Connecting to the stream server…");
-                    }
-                    Err(e) => st.say(format!("Can't stream: {e}")),
+                if project.settings.stream.key.trim().is_empty() {
+                    // No key yet: ask for one instead of failing quietly.
+                    st.show_connect = true;
+                } else {
+                    go_live(st, project, engine);
                 }
+            }
+            if let Some(err) = &st.stream_error {
+                ui.colored_label(Color32::LIGHT_RED, format!("Can't stream: {err}"));
             }
         }
         Some(s) => {
