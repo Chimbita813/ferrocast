@@ -171,29 +171,24 @@ fn add_source(project: &mut Project, st: &mut UiState, name: String, kind: Video
 fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine) {
     heading(ui, "Sources");
     let scene_id = project.active_scene;
+    let count = project.active().items.len();
+    if count == 0 {
+        ui.weak("No sources yet. Use \"+ Add source\" below.");
+    } else {
+        ui.weak("Top layer first. Click the eye to show or hide.");
+    }
     egui::ScrollArea::vertical()
         .id_salt("sources")
-        .max_height(ui.available_height() - 60.0)
+        .max_height((ui.available_height() * 0.45).max(60.0))
         .show(ui, |ui| {
             let scene = project.active_mut();
             // Top of the stack first, like OBS.
-            for item in scene.items.iter_mut().rev() {
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut item.visible, "").on_hover_text("Visible");
-                    let label = format!("{} · {}", item.name, item.source.label());
-                    if ui
-                        .selectable_label(st.selected == Some(item.id), label)
-                        .clicked()
-                    {
-                        st.selected = Some(item.id);
-                    }
-                    if let Some(err) = engine.source_error(item.id) {
-                        ui.colored_label(Color32::LIGHT_RED, "(!)")
-                            .on_hover_text(err);
-                    }
-                });
+            for (layer, item) in scene.items.iter_mut().rev().enumerate() {
+                let error = engine.source_error(item.id);
+                source_row(ui, st, item, layer + 1, error.as_deref());
             }
         });
+    ui.add_space(4.0);
 
     ui.horizontal(|ui| {
         ui.menu_button("+ Add source", |ui| {
@@ -277,14 +272,26 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
         let selected = st.selected;
         ui.add_enabled_ui(selected.is_some(), |ui| {
             let sel = selected.unwrap_or(Id(0));
-            if ui.button("−").on_hover_text("Remove source").clicked() {
+            let items = &project.active().items;
+            let pos = items.iter().position(|i| i.id == sel);
+            let at_top = pos.is_none_or(|p| p + 1 == items.len());
+            let at_bottom = pos.is_none_or(|p| p == 0);
+            if ui.button("Remove").clicked() {
                 project.remove_item(scene_id, sel);
                 st.selected = None;
             }
-            if ui.button("Up").on_hover_text("Move up").clicked() {
+            if ui
+                .add_enabled(!at_top, egui::Button::new("Move up"))
+                .on_hover_text("Bring forward one layer")
+                .clicked()
+            {
                 project.active_mut().raise(sel);
             }
-            if ui.button("Down").on_hover_text("Move down").clicked() {
+            if ui
+                .add_enabled(!at_bottom, egui::Button::new("Move down"))
+                .on_hover_text("Send back one layer")
+                .clicked()
+            {
                 project.active_mut().lower(sel);
             }
             let (cw, ch) = project.canvas_size();
@@ -305,62 +312,210 @@ fn sources(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &Engine
     });
     let canvas = project.canvas_size();
     if let Some(item) = st.selected.and_then(|id| project.active_mut().item_mut(id)) {
-        ui.horizontal(|ui| {
-            ui.label("Name");
-            ui.text_edit_singleline(&mut item.name);
+        ui.add_space(4.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            egui::ScrollArea::vertical()
+                .id_salt("source-props")
+                .show(ui, |ui| properties(ui, st, item, engine, canvas));
         });
-        ui.horizontal(|ui| {
-            for (label, v) in [
-                ("x", &mut item.rect.x),
-                ("y", &mut item.rect.y),
-                ("w", &mut item.rect.w),
-                ("h", &mut item.rect.h),
-            ] {
-                ui.label(label);
-                ui.add(egui::DragValue::new(v).speed(1.0));
-            }
-        });
-        if let VideoSourceKind::Color { rgba } = &mut item.source {
-            ui.color_edit_button_srgba_unmultiplied(rgba);
+    }
+}
+
+fn properties(
+    ui: &mut Ui,
+    st: &mut UiState,
+    item: &mut chimcast_core::SceneItem,
+    engine: &Engine,
+    canvas: (f32, f32),
+) {
+    ui.label(egui::RichText::new(format!("{} properties", item.source.label())).strong());
+    ui.horizontal(|ui| {
+        ui.label("Name");
+        ui.text_edit_singleline(&mut item.name);
+    });
+    ui.checkbox(&mut item.visible, "Visible");
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Position");
+        ui.add(
+            egui::DragValue::new(&mut item.rect.x)
+                .speed(1.0)
+                .prefix("x "),
+        );
+        ui.add(
+            egui::DragValue::new(&mut item.rect.y)
+                .speed(1.0)
+                .prefix("y "),
+        );
+        ui.label("Size");
+        ui.add(
+            egui::DragValue::new(&mut item.rect.w)
+                .speed(1.0)
+                .prefix("w "),
+        );
+        ui.add(
+            egui::DragValue::new(&mut item.rect.h)
+                .speed(1.0)
+                .prefix("h "),
+        );
+    });
+    if let VideoSourceKind::Color { rgba } = &mut item.source {
+        ui.color_edit_button_srgba_unmultiplied(rgba);
+    }
+    if let VideoSourceKind::Browser { url, width, height } = &mut item.source {
+        // Edits go to a buffer: changing the source re-creates the page.
+        if st
+            .browser_edit
+            .as_ref()
+            .is_none_or(|(id, ..)| *id != item.id)
+        {
+            st.browser_edit = Some((item.id, url.clone(), [*width, *height]));
         }
-        if let VideoSourceKind::Browser { url, width, height } = &mut item.source {
-            // Edits go to a buffer: changing the source re-creates the page.
-            if st
-                .browser_edit
-                .as_ref()
-                .is_none_or(|(id, ..)| *id != item.id)
+        let (_, edit_url, edit_size) = st.browser_edit.as_mut().unwrap();
+        ui.horizontal(|ui| {
+            ui.label("URL");
+            ui.add(egui::TextEdit::singleline(edit_url).desired_width(f32::INFINITY));
+        });
+        ui.horizontal_wrapped(|ui| page_size(ui, edit_size));
+        ui.horizontal(|ui| {
+            let changed = *edit_url.trim() != *url || *edit_size != [*width, *height];
+            if ui
+                .add_enabled(changed, egui::Button::new("Apply"))
+                .clicked()
             {
-                st.browser_edit = Some((item.id, url.clone(), [*width, *height]));
+                *url = edit_url.trim().to_string();
+                [*width, *height] = *edit_size;
+                item.rect = page_rect(*width, *height, canvas);
             }
-            let (_, edit_url, edit_size) = st.browser_edit.as_mut().unwrap();
-            ui.horizontal(|ui| {
-                ui.label("URL");
-                ui.add(egui::TextEdit::singleline(edit_url).desired_width(f32::INFINITY));
-            });
-            ui.horizontal(|ui| {
-                page_size(ui, edit_size);
-                let changed = *edit_url.trim() != *url || *edit_size != [*width, *height];
-                if ui
-                    .add_enabled(changed, egui::Button::new("Apply"))
-                    .clicked()
-                {
-                    *url = edit_url.trim().to_string();
-                    [*width, *height] = *edit_size;
-                    item.rect = page_rect(*width, *height, canvas);
-                }
-                if ui
-                    .button("Refresh")
-                    .on_hover_text("Reload the page, e.g. after changing the widget in Streamlabs")
-                    .clicked()
-                {
-                    engine.reload_source(item.id);
-                }
-            });
-            if let Some(err) = engine.source_error(item.id) {
-                ui.colored_label(Color32::LIGHT_RED, err);
+            if ui
+                .button("Refresh")
+                .on_hover_text("Reload the page, e.g. after changing the widget in Streamlabs")
+                .clicked()
+            {
+                engine.reload_source(item.id);
             }
+        });
+        if let Some(err) = engine.source_error(item.id) {
+            ui.colored_label(Color32::LIGHT_RED, err);
         }
     }
+}
+
+/// One line in the source list: eye toggle, layer number, name, type.
+fn source_row(
+    ui: &mut Ui,
+    st: &mut UiState,
+    item: &mut chimcast_core::SceneItem,
+    layer: usize,
+    error: Option<&str>,
+) {
+    let selected = st.selected == Some(item.id);
+    let visuals = ui.visuals().clone();
+    let fill = if selected {
+        visuals.selection.bg_fill
+    } else {
+        Color32::TRANSPARENT
+    };
+    let row = egui::Frame::NONE
+        .fill(fill)
+        .corner_radius(CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(4, 2))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let eye = eye_icon(ui, item.visible);
+                ui.weak(format!("{layer}."));
+                let mut name = egui::RichText::new(&item.name);
+                if !item.visible {
+                    name = name.weak().italics();
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let kind = egui::RichText::new(item.source.label()).small().weak();
+                    ui.add(egui::Label::new(kind).selectable(false));
+                    if !item.visible {
+                        let hidden = egui::RichText::new("hidden").small().weak();
+                        ui.add(egui::Label::new(hidden).selectable(false));
+                    }
+                    if let Some(err) = error {
+                        ui.colored_label(Color32::LIGHT_RED, "error")
+                            .on_hover_text(err);
+                    }
+                    // The name takes whatever width is left, cut short with "...".
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(name).truncate().selectable(false));
+                    });
+                });
+                eye
+            })
+            .inner
+        });
+    // One click target for the whole row (drawn on top of its contents): the eye
+    // toggles visibility, anywhere else selects.
+    let eye = row.inner;
+    let response = ui.interact(
+        row.response.rect,
+        ui.make_persistent_id(("source-row", item.id.0)),
+        Sense::click(),
+    );
+    if response.clicked() {
+        let on_eye = response
+            .interact_pointer_pos()
+            .is_some_and(|p| eye.expand(3.0).contains(p));
+        if on_eye {
+            item.visible = !item.visible;
+        } else {
+            st.selected = Some(item.id);
+        }
+    }
+    if response.hovered() {
+        let on_eye = response
+            .hover_pos()
+            .is_some_and(|p| eye.expand(3.0).contains(p));
+        if on_eye {
+            response
+                .clone()
+                .on_hover_text(if item.visible { "Hide" } else { "Show" });
+        }
+    }
+    if response.hovered() && !selected {
+        ui.painter().rect_stroke(
+            row.response.rect,
+            CornerRadius::same(4),
+            Stroke::new(1.0, visuals.widgets.hovered.bg_stroke.color),
+            StrokeKind::Inside,
+        );
+    }
+}
+
+/// Paints an eye: open when visible, crossed out when hidden. Returns its rect.
+fn eye_icon(ui: &mut Ui, visible: bool) -> ERect {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(20.0, 16.0), Sense::hover());
+    let color = if visible {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let p = ui.painter();
+    let c = rect.center();
+    let stroke = Stroke::new(1.5, color);
+    // Almond outline from two arcs, approximated with line segments.
+    let (hw, hh) = (8.0, 5.0);
+    let arc = |sign: f32| -> Vec<Pos2> {
+        (0..=12)
+            .map(|i| {
+                let t = i as f32 / 12.0 * std::f32::consts::PI;
+                Pos2::new(c.x - hw * t.cos(), c.y + sign * hh * t.sin())
+            })
+            .collect()
+    };
+    p.add(egui::Shape::line(arc(-1.0), stroke));
+    p.add(egui::Shape::line(arc(1.0), stroke));
+    if visible {
+        p.circle_filled(c, 2.5, color);
+    } else {
+        p.line_segment([c + Vec2::new(-7.0, 6.0), c + Vec2::new(7.0, -6.0)], stroke);
+    }
+    rect
 }
 
 fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dialog: AddDialog) {
@@ -437,7 +592,7 @@ fn add_dialog(ctx: &egui::Context, st: &mut UiState, project: &mut Project, dial
                     })
                     .inner;
                 let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                ui.horizontal(|ui| page_size(ui, &mut st.browser_size));
+                ui.horizontal_wrapped(|ui| page_size(ui, &mut st.browser_size));
                 if (ui.button("Add").clicked() || enter) && !st.browser_url.trim().is_empty() {
                     let url = st.browser_url.trim().to_string();
                     let [width, height] = st.browser_size;
@@ -475,12 +630,12 @@ fn page_size(ui: &mut Ui, size: &mut [u32; 2]) {
     ui.add(
         egui::DragValue::new(&mut size[0])
             .range(16..=7680)
-            .suffix(" w"),
+            .prefix("w "),
     );
     ui.add(
         egui::DragValue::new(&mut size[1])
             .range(16..=4320)
-            .suffix(" h"),
+            .prefix("h "),
     );
 }
 
