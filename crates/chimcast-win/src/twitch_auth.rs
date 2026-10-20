@@ -7,6 +7,18 @@ use serde::Deserialize;
 const SCOPES: &str = "chat:read chat:edit";
 const AGENT: &str = "Chimcast";
 
+/// Chimcast's own Twitch app (Public client type). A client ID is a public
+/// identifier, not a secret; a different one can be set in the project.
+pub const DEFAULT_CLIENT_ID: &str = "yi57c9trcfzrzsc7cyauswp72kyno4";
+
+/// Picks the project's client ID if set, else Chimcast's.
+pub fn client_id(configured: &str) -> &str {
+    match configured.trim() {
+        "" => DEFAULT_CLIENT_ID,
+        id => id,
+    }
+}
+
 /// Where the user registers the Twitch app that provides the client ID.
 pub const CONSOLE_PAGE: &str = "https://dev.twitch.tv/console/apps";
 

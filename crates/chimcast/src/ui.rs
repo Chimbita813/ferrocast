@@ -736,7 +736,8 @@ fn chat_panel(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
         .is_some_and(|c| c.state() == ChatState::AuthFailed)
         && matches!(*st.login.lock().unwrap(), Login::Idle)
     {
-        let (id, refresh) = (s.twitch_client_id.clone(), s.twitch_refresh.clone());
+        let id = chimcast_win::twitch_auth::client_id(&s.twitch_client_id).to_string();
+        let refresh = s.twitch_refresh.clone();
         let login = st.login.clone();
         *login.lock().unwrap() = Login::Starting;
         std::thread::spawn(move || {
@@ -943,7 +944,7 @@ fn login_ui(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
     if let Some(e) = &st.chat_error {
         ui.colored_label(Color32::LIGHT_RED, e);
     }
-    let client_id = project.settings.stream.twitch_client_id.trim().to_string();
+    let client_id = twitch_auth::client_id(&project.settings.stream.twitch_client_id).to_string();
     if client_id.is_empty() {
         ui.weak("To type here, register Chimcast with Twitch once:");
         if ui
