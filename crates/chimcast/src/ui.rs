@@ -10,6 +10,7 @@ use chimcast_win::{devices, Engine};
 use egui::{Color32, CornerRadius, Pos2, Rect as ERect, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 use crate::painter::PREVIEW;
+use crate::theme;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Drag {
@@ -104,9 +105,19 @@ pub struct UiState {
     streaming_started: Option<Instant>,
     /// Updater status, filled in by the app each frame.
     pub update: Option<String>,
+    /// "build 19", shown next to the logo.
+    pub build: String,
+    logo: Option<egui::TextureHandle>,
 }
 
 impl UiState {
+    pub fn new(build: String) -> Self {
+        Self {
+            build,
+            ..Self::default()
+        }
+    }
+
     fn say(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
         log::info!("{msg}");
@@ -122,18 +133,43 @@ pub fn draw(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
     if let Some(msg) = alert {
         st.say(msg);
     }
-    egui::Panel::top("test-widgets").show(ui, |ui| test_widgets(ui, st, project));
-    egui::Panel::bottom("status").show(ui, |ui| status_bar(ui, st, engine));
+    let bar = |y| {
+        egui::Frame::new()
+            .fill(theme::BG)
+            .inner_margin(egui::Margin::symmetric(12, y))
+    };
+    egui::Panel::top("header")
+        .frame(bar(8))
+        .show(ui, |ui| header(ui, st, engine));
+    if st.show_tests {
+        egui::Panel::top("test-widgets")
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::PANEL)
+                    .inner_margin(egui::Margin::symmetric(12, 6)),
+            )
+            .show(ui, |ui| test_widgets(ui, st, project));
+    }
+    egui::Panel::bottom("status")
+        .frame(bar(4))
+        .show(ui, |ui| status_bar(ui, st, engine));
     egui::Panel::bottom("dock")
         .resizable(true)
-        .default_size(250.0)
-        .min_size(180.0)
+        .default_size(260.0)
+        .min_size(190.0)
+        .frame(egui::Frame::new().fill(theme::BG).inner_margin(8))
         .show(ui, |ui| {
             ui.columns(4, |cols| {
-                scenes(&mut cols[0], st, project);
-                sources(&mut cols[1], st, project, engine);
-                mixer(&mut cols[2], project, engine);
-                controls(&mut cols[3], st, project, engine);
+                let card = |ui: &mut Ui, body: &mut dyn FnMut(&mut Ui)| {
+                    theme::card().show(ui, |ui| {
+                        ui.set_min_height(ui.available_height());
+                        body(ui);
+                    });
+                };
+                card(&mut cols[0], &mut |ui| scenes(ui, st, project));
+                card(&mut cols[1], &mut |ui| sources(ui, st, project, engine));
+                card(&mut cols[2], &mut |ui| mixer(ui, project, engine));
+                card(&mut cols[3], &mut |ui| controls(ui, st, project, engine));
             });
         });
     if st.hide_chat {
@@ -151,7 +187,9 @@ pub fn draw(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
             .min_size(200.0)
             .show(ui, |ui| chat_panel(ui, st, project));
     }
-    egui::CentralPanel::default_margins().show(ui, |ui| preview(ui, st, project));
+    egui::CentralPanel::default_margins()
+        .frame(egui::Frame::new().fill(theme::BG).inner_margin(8))
+        .show(ui, |ui| preview(ui, st, project));
 
     if st.show_token {
         token_dialog(ui.ctx(), st, project);
@@ -174,41 +212,112 @@ pub fn draw(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
 }
 
 fn heading(ui: &mut Ui, text: &str) {
-    ui.label(egui::RichText::new(text).strong());
-    ui.separator();
+    let title = egui::RichText::new(text.to_uppercase())
+        .size(11.0)
+        .strong()
+        .extra_letter_spacing(1.2)
+        .color(theme::WEAK);
+    ui.add(egui::Label::new(title).selectable(false));
+    ui.add_space(2.0);
+}
+
+/// Logo, name and build on the left; live/recording badges and Settings on the right.
+fn header(ui: &mut Ui, st: &mut UiState, engine: &Engine) {
+    let logo = st
+        .logo
+        .get_or_insert_with(|| {
+            let rgba = include_bytes!("../../../assets/icon-64.rgba");
+            ui.ctx().load_texture(
+                "logo",
+                egui::ColorImage::from_rgba_unmultiplied([64, 64], rgba),
+                egui::TextureOptions::LINEAR,
+            )
+        })
+        .id();
+    ui.horizontal(|ui| {
+        ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+            logo,
+            [26.0, 26.0],
+        )));
+        let name = egui::RichText::new("Chimcast")
+            .size(19.0)
+            .strong()
+            .color(theme::TEXT);
+        ui.add(egui::Label::new(name).selectable(false));
+        theme::chip(ui, st.build.clone(), theme::WEAK, theme::CARD);
+        ui.add_space(16.0);
+        ui.toggle_value(&mut st.show_tests, "Test Widgets")
+            .on_hover_text("Play test follows, subs, bits and more on your Streamlabs alerts");
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Settings").clicked() {
+                st.show_settings = true;
+            }
+            // A dot that breathes once a second while on air.
+            let pulse = |ui: &mut Ui| {
+                let t = ui.input(|i| i.time) as f32;
+                0.55 + 0.45 * (t * std::f32::consts::TAU).sin().abs()
+            };
+            if engine.recording_status().is_some() {
+                let a = pulse(ui);
+                theme::chip(
+                    ui,
+                    format!("REC  {}", elapsed(st.recording_started)),
+                    Color32::WHITE,
+                    theme::LIVE.gamma_multiply(0.35 + 0.4 * a),
+                );
+            }
+            if let Some(s) = engine.streaming_status() {
+                let (text, bg) = match s.state {
+                    OutputState::Running => (
+                        format!("LIVE  {}", elapsed(st.streaming_started)),
+                        theme::LIVE.gamma_multiply(pulse(ui)),
+                    ),
+                    OutputState::Starting => ("CONNECTING".into(), theme::RAISED),
+                    _ => ("OFFLINE".into(), theme::RAISED),
+                };
+                theme::chip(ui, text, Color32::WHITE, bg);
+            }
+        });
+    });
 }
 
 fn status_bar(ui: &mut Ui, st: &mut UiState, engine: &Engine) {
     let s = engine.stats();
+    let stat = |ui: &mut Ui, text: String| theme::chip(ui, text, theme::WEAK, theme::CARD);
     ui.horizontal(|ui| {
-        ui.label(format!("{:.0} fps", s.fps));
-        ui.separator();
-        ui.label(format!("render {:.1} ms", s.render_ms));
-        ui.separator();
-        ui.label(format!("RAM {} MB", s.private_bytes / (1024 * 1024)));
+        ui.spacing_mut().item_spacing.x = 6.0;
+        stat(ui, format!("{:.0} fps", s.fps));
+        stat(ui, format!("render {:.1} ms", s.render_ms));
+        stat(ui, format!("RAM {} MB", s.private_bytes / (1024 * 1024)));
         if let Some(enc) = &s.video_encoder {
-            ui.separator();
-            ui.label(format!("encoder: {enc}"));
+            stat(ui, enc.clone());
         }
         if s.encoder_dropped_frames + s.skipped_frames > 0 {
-            ui.separator();
-            ui.label(format!(
-                "dropped {} / skipped {}",
-                s.encoder_dropped_frames, s.skipped_frames
-            ));
+            theme::chip(
+                ui,
+                format!(
+                    "dropped {} / skipped {}",
+                    s.encoder_dropped_frames, s.skipped_frames
+                ),
+                theme::WARN,
+                theme::CARD,
+            );
         }
         if let Some(err) = &s.last_error {
-            ui.separator();
-            ui.colored_label(Color32::LIGHT_RED, err);
+            theme::chip(
+                ui,
+                err.clone(),
+                Color32::WHITE,
+                theme::LIVE.gamma_multiply(0.6),
+            );
         }
         if let Some(note) = &st.update {
-            ui.separator();
-            ui.label(note);
+            theme::chip(ui, note.clone(), theme::CYAN, theme::CARD);
         }
         if let Some((msg, at)) = &st.message {
             if at.elapsed() < Duration::from_secs(8) {
-                ui.separator();
-                ui.label(msg);
+                ui.add(egui::Label::new(msg.as_str()).truncate());
             } else {
                 st.message = None;
             }
@@ -537,8 +646,7 @@ fn source_row(
                     name = name.weak().italics();
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let kind = egui::RichText::new(item.source.label()).small().weak();
-                    ui.add(egui::Label::new(kind).selectable(false));
+                    theme::chip(ui, item.source.label(), theme::WEAK, theme::RAISED);
                     if !item.visible {
                         let hidden = egui::RichText::new("hidden").small().weak();
                         ui.add(egui::Label::new(hidden).selectable(false));
@@ -629,13 +737,12 @@ fn eye_icon(ui: &mut Ui, visible: bool) -> ERect {
 fn test_widgets(ui: &mut Ui, st: &mut UiState, project: &Project) {
     use chimcast_win::streamlabs::{send_test_alert, TEST_ALERTS};
     ui.horizontal(|ui| {
-        ui.toggle_value(&mut st.show_tests, "Test Widgets");
-        if !st.show_tests {
-            return;
-        }
-        ui.separator();
+        heading(ui, "Test alerts");
+        ui.add_space(4.0);
         for (label, kind) in TEST_ALERTS {
-            let pill = egui::Button::new(*label).corner_radius(CornerRadius::same(12));
+            let pill = egui::Button::new(*label)
+                .corner_radius(CornerRadius::same(12))
+                .stroke(Stroke::new(1.0, theme::ACCENT.gamma_multiply(0.6)));
             if !ui.add(pill).clicked() {
                 continue;
             }
@@ -659,7 +766,7 @@ fn test_widgets(ui: &mut Ui, st: &mut UiState, project: &Project) {
             });
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Token...").clicked() {
+            if ui.small_button("Streamlabs token...").clicked() {
                 st.show_token = true;
             }
         });
@@ -1267,6 +1374,34 @@ fn db_to_meter(db: f32) -> f32 {
     ((db + 60.0) / 60.0).clamp(0.0, 1.0)
 }
 
+/// A segmented level meter: green, then yellow from -12 dB, red from -3 dB.
+fn meter(ui: &mut Ui, level: f32) {
+    const SEGMENTS: usize = 32;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 8.0), Sense::hover());
+    let p = ui.painter();
+    let gap = 2.0;
+    let w = (rect.width() - gap * (SEGMENTS - 1) as f32) / SEGMENTS as f32;
+    for i in 0..SEGMENTS {
+        let t = (i as f32 + 0.5) / SEGMENTS as f32;
+        let db = t * 60.0 - 60.0;
+        let color = if db > -3.0 {
+            theme::LIVE
+        } else if db > -12.0 {
+            theme::WARN
+        } else {
+            theme::GOOD
+        };
+        let color = if t <= level {
+            color
+        } else {
+            color.gamma_multiply(0.14)
+        };
+        let x = rect.min.x + i as f32 * (w + gap);
+        let seg = ERect::from_min_size(Pos2::new(x, rect.min.y), Vec2::new(w, rect.height()));
+        p.rect_filled(seg, CornerRadius::same(1), color);
+    }
+}
+
 fn mixer(ui: &mut Ui, project: &mut Project, engine: &Engine) {
     heading(ui, "Audio Mixer");
     let peaks = engine.stats().audio_peaks;
@@ -1277,7 +1412,7 @@ fn mixer(ui: &mut Ui, project: &mut Project, engine: &Engine) {
         .show(ui, |ui| {
             for a in &mut project.audio {
                 ui.horizontal(|ui| {
-                    ui.label(&a.name);
+                    ui.label(egui::RichText::new(&a.name).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("x").on_hover_text("Remove").clicked() {
                             remove = Some(a.id);
@@ -1287,23 +1422,7 @@ fn mixer(ui: &mut Ui, project: &mut Project, engine: &Engine) {
                     });
                 });
                 let peak = peaks.get(&a.id.0).copied().unwrap_or(f32::NEG_INFINITY);
-                let (rect, _) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 6.0), Sense::hover());
-                let p = ui.painter();
-                p.rect_filled(rect, CornerRadius::same(2), Color32::from_gray(40));
-                let level = if a.muted { 0.0 } else { db_to_meter(peak) };
-                let color = if peak > -3.0 {
-                    Color32::from_rgb(230, 70, 60)
-                } else if peak > -12.0 {
-                    Color32::from_rgb(230, 200, 60)
-                } else {
-                    Color32::from_rgb(80, 200, 100)
-                };
-                p.rect_filled(
-                    ERect::from_min_size(rect.min, Vec2::new(rect.width() * level, rect.height())),
-                    CornerRadius::same(2),
-                    color,
-                );
+                meter(ui, if a.muted { 0.0 } else { db_to_meter(peak) });
                 let mut db = if a.volume > 0.0 {
                     20.0 * a.volume.log10()
                 } else {
@@ -1376,14 +1495,16 @@ fn elapsed(since: Option<Instant>) -> String {
 }
 
 fn controls(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut Engine) {
-    heading(ui, "Controls");
+    heading(ui, "Go live");
+    let big = Vec2::new(ui.available_width(), 44.0);
     let wide = Vec2::new(ui.available_width(), 30.0);
 
     let streaming = engine.streaming_status();
     match &streaming {
         None => {
             if ui
-                .add_sized(wide, egui::Button::new("Start Streaming"))
+                .add_sized(big, theme::primary("Go Live", theme::ACCENT))
+                .on_hover_text("Start streaming")
                 .clicked()
             {
                 if project.settings.stream.key.trim().is_empty() {
@@ -1395,20 +1516,26 @@ fn controls(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
             }
             if let Some(err) = &st.stream_error {
                 ui.colored_label(Color32::LIGHT_RED, format!("Can't stream: {err}"));
+            } else if project.settings.stream.key.trim().is_empty() {
+                ui.weak("Not connected yet. Go Live walks you through it.");
+            } else {
+                ui.weak("Stream key saved. You're ready.");
             }
         }
         Some(s) => {
-            let label = match &s.state {
-                OutputState::Starting => "Connecting… (click to cancel)".to_string(),
-                OutputState::Running => {
-                    format!("Stop Streaming  {}", elapsed(st.streaming_started))
+            let (label, fill) = match &s.state {
+                OutputState::Starting => {
+                    ("Connecting... click to cancel".to_string(), theme::RAISED)
                 }
+                OutputState::Running => (
+                    format!("End Stream  {}", elapsed(st.streaming_started)),
+                    theme::LIVE,
+                ),
                 OutputState::Failed(_) | OutputState::Stopped => {
-                    "Stream ended (click to reset)".to_string()
+                    ("Stream ended, click to reset".to_string(), theme::RAISED)
                 }
             };
-            let button = egui::Button::new(label).fill(Color32::from_rgb(140, 30, 30));
-            if ui.add_sized(wide, button).clicked() {
+            if ui.add_sized(big, theme::primary(&label, fill)).clicked() {
                 engine.stop_streaming();
                 st.streaming_started = None;
             }
@@ -1447,7 +1574,7 @@ fn controls(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
             if ui
                 .add_sized(
                     wide,
-                    egui::Button::new(label).fill(Color32::from_rgb(140, 30, 30)),
+                    egui::Button::new(label).fill(theme::LIVE.gamma_multiply(0.55)),
                 )
                 .clicked()
             {
@@ -1459,9 +1586,6 @@ fn controls(ui: &mut Ui, st: &mut UiState, project: &mut Project, engine: &mut E
                 ui.colored_label(Color32::LIGHT_RED, e);
             }
         }
-    }
-    if ui.add_sized(wide, egui::Button::new("Settings")).clicked() {
-        st.show_settings = true;
     }
 }
 
@@ -1604,6 +1728,12 @@ fn settings(ui: &mut Ui, st: &mut UiState, project: &mut Project, live: bool) {
 fn preview(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
     let (cw, ch) = project.canvas_size();
     let avail = ui.available_rect_before_wrap();
+    ui.painter().rect_filled(
+        avail,
+        CornerRadius::same(theme::RADIUS),
+        Color32::from_rgb(0x05, 0x07, 0x0B),
+    );
+    let avail = avail.shrink(6.0);
     let fit =
         Rect::new(avail.min.x, avail.min.y, avail.width(), avail.height()).fit_aspect(cw / ch);
     let rect = ERect::from_min_size(Pos2::new(fit.x, fit.y), Vec2::new(fit.w, fit.h));
@@ -1614,6 +1744,12 @@ fn preview(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
         rect,
         ERect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
         Color32::WHITE,
+    );
+    ui.painter().rect_stroke(
+        rect.expand(1.0),
+        CornerRadius::ZERO,
+        Stroke::new(1.0, theme::BORDER),
+        StrokeKind::Outside,
     );
 
     let scale = rect.width() / cw;
@@ -1670,12 +1806,12 @@ fn preview(ui: &mut Ui, st: &mut UiState, project: &mut Project) {
 
     if let Some(item) = st.selected.and_then(|id| project.active().item(id)) {
         let r = to_screen(&item.rect);
-        let stroke = Stroke::new(1.5, Color32::from_rgb(255, 80, 80));
+        let stroke = Stroke::new(1.5, theme::CYAN);
         painter.rect_stroke(r, CornerRadius::ZERO, stroke, StrokeKind::Inside);
         painter.rect_filled(
             ERect::from_center_size(r.max, Vec2::splat(HANDLE)),
             CornerRadius::ZERO,
-            Color32::from_rgb(255, 80, 80),
+            theme::CYAN,
         );
     }
 }

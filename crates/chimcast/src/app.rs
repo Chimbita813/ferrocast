@@ -137,7 +137,7 @@ impl App {
         let painter =
             Painter::new(&device, hwnd, size.width, size.height).map_err(|e| e.message())?;
         let ctx = egui::Context::default();
-        ctx.set_visuals(egui::Visuals::dark());
+        crate::theme::apply(&ctx);
         let egui = egui_winit::State::new(
             ctx,
             egui::ViewportId::ROOT,
@@ -152,7 +152,7 @@ impl App {
             painter,
             engine,
             device,
-            ui: UiState::default(),
+            ui: UiState::new(BUILD.map_or("dev".into(), |b| format!("build {b}"))),
         })
     }
 

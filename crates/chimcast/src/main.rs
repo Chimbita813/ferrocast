@@ -12,6 +12,8 @@ mod logger;
 #[cfg(windows)]
 mod painter;
 #[cfg(windows)]
+mod theme;
+#[cfg(windows)]
 mod ui;
 
 fn main() {
